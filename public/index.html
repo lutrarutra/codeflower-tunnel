@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>code flower tunnel</title>
+    <link rel="icon" href="/icon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" src="/account.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="/icon.svg" alt="" />
+        <h1>code flower tunnel</h1>
+      </header>
+
+      <section id="error" class="error" role="alert" hidden></section>
+
+      <section id="signed-out" hidden>
+        <h2>Sign in</h2>
+        <p class="muted">Reach your code flower sandboxes from anywhere. Everything between your browser and your machine is end-to-end encrypted: the tunnel cannot read it.</p>
+        <div class="row">
+          <a class="button" id="github" href="/auth/github" hidden>Sign in with GitHub</a>
+          <a class="button" id="google" href="/auth/google" hidden>Sign in with Google</a>
+          <button id="passkey-login">Sign in with a passkey</button>
+        </div>
+        <p class="muted gap-top">New here? <button id="passkey-create">Create an account with a passkey</button></p>
+      </section>
+
+      <div id="signed-in" hidden>
+        <section>
+          <div class="row spread">
+            <h2 id="name"></h2>
+            <button id="logout">Sign out</button>
+          </div>
+        </section>
+
+        <section>
+          <h2>Connectors</h2>
+          <p class="muted">Machines running <code>codeflower client</code> that you signed in with <code>codeflower tunnel login</code>.</p>
+          <ul class="list" id="connectors"></ul>
+        </section>
+
+        <section>
+          <h2>Sign-in methods</h2>
+          <ul class="list" id="methods"></ul>
+          <div class="row gap-top">
+            <button id="passkey-add">Add a passkey</button>
+            <a class="button" id="link-github" href="/auth/github" hidden>Link GitHub</a>
+            <a class="button" id="link-google" href="/auth/google" hidden>Link Google</a>
+          </div>
+        </section>
+
+        <section>
+          <h2>Your data</h2>
+          <p class="muted">The tunnel stores your sign-in methods and connectors, nothing you do through them.</p>
+          <div class="row">
+            <a class="button" href="/api/me/export" download>Download my data</a>
+            <button class="danger" id="delete-account">Delete my account</button>
+          </div>
+        </section>
+      </div>
+    </main>
+  </body>
+</html>

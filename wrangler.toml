@@ -1,0 +1,34 @@
+name = "codeflower-tunnel"
+main = "src/worker.ts"
+compatibility_date = "2026-10-01"
+compatibility_flags = ["nodejs_compat"]
+
+# Pages (sign-in, device approval, the bootstrap). Everything else reaches the Worker.
+[assets]
+directory = "public"
+html_handling = "drop-trailing-slash"
+
+# Create once: wrangler d1 create codeflower-tunnel --jurisdiction eu
+[[d1_databases]]
+binding = "DB"
+database_name = "codeflower-tunnel"
+database_id = "replace-with-the-id-wrangler-printed"
+migrations_dir = "migrations"
+
+[[durable_objects.bindings]]
+name = "CONNECTOR_HUB"
+class_name = "ConnectorHub"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["ConnectorHub"]
+
+[vars]
+PUBLIC_URL = "https://tunnel.example.org"
+# Secrets, set with `wrangler secret put`: COOKIE_SECRET, GITHUB_CLIENT_ID,
+# GITHUB_CLIENT_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET.
+# For `wrangler dev`, put them in .dev.vars.
+
+[observability]
+# No request logs beyond errors: the tunnel keeps as little metadata as it can.
+enabled = false
