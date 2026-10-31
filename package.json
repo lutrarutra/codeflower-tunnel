@@ -17,7 +17,8 @@
     "dev:worker": "wrangler dev",
     "deploy": "wrangler d1 migrations apply codeflower-tunnel --remote && wrangler deploy",
     "db:generate": "drizzle-kit generate",
-    "vendor-ui": "node scripts/vendor-ui.ts"
+    "vendor-ui": "node scripts/vendor-ui.ts",
+    "usage": "node scripts/usage.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.11",
