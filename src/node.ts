@@ -2,7 +2,7 @@
 // TUNNEL_DB (created and migrated at startup), sockets paired in memory.
 
 import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
 import { createNodeWebSocket } from '@hono/node-ws';
@@ -45,13 +45,14 @@ const types: Record<string, string> = {
 function pages(): Map<string, { body: Uint8Array<ArrayBuffer>; type: string }> {
   const folder = join(root, 'public');
   const served = new Map<string, { body: Uint8Array<ArrayBuffer>; type: string }>();
-  for (const name of readdirSync(folder)) {
+  for (const name of readdirSync(folder, { recursive: true }) as string[]) {
     const extension = name.slice(name.lastIndexOf('.'));
     const type = types[extension];
     if (!type) continue;
+    const path = name.split(sep).join('/');
     const page = { body: new Uint8Array(readFileSync(join(folder, name))), type };
-    served.set(`/${name}`, page);
-    if (extension === '.html') served.set(name === 'index.html' ? '/' : `/${name.slice(0, -5)}`, page);
+    served.set(`/${path}`, page);
+    if (extension === '.html') served.set(path === 'index.html' ? '/' : `/${path.slice(0, -5)}`, page);
   }
   return served;
 }

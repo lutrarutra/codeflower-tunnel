@@ -217,6 +217,7 @@ test('the bootstrap answers every path under /m/, and the pairing page /p', asyn
     assert.match(response.headers.get('Content-Security-Policy') ?? '', /script-src 'self'/);
   }
   assert.match(await (await fetch(`${base}/m/x/`)).text(), /tunnel\/m\.js/);
+  for (const script of ['/tunnel/m.js', '/tunnel/p.js', '/sw.js']) assert.equal((await fetch(base + script)).status, 200, script);
 });
 
 test('a connector can replace its key and remove itself, with its token only', async () => {
