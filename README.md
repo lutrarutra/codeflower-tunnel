@@ -21,8 +21,9 @@
 </p>
 
 Reach your [code flower](https://github.com/lutrarutra/codeflower-workspace) sandboxes from any
-browser or phone. `codeflower client` on your machine connects out to the tunnel, you sign in to
-the tunnel, and the tunnel pairs your browser with your machine.
+browser or phone. Run `codeflower tunnel pair` on your machine: it signs the machine in to the
+tunnel, keeps code flower connected out to it in the background, and pairs your browser with the
+machine. Every sandbox on the machine then shows up in that browser.
 
 - **End-to-end encrypted.** Browser and machine encrypt everything between them. The tunnel routes
   frames it cannot read, and a hacked tunnel or account alone gives no access.
