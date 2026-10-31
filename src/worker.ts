@@ -13,6 +13,7 @@ import { regionOf, type Rendezvous } from './rendezvous.ts';
 
 interface Bindings {
   DB: D1Database;
+  ASSETS: Fetcher;
   CONNECTOR_HUB: DurableObjectNamespace<ConnectorHub>;
   [name: string]: unknown;
 }
@@ -143,7 +144,12 @@ export default {
     app ??= createApp({
       config: readConfig(env),
       db: (c) => drizzle((c.env as Bindings).DB, { schema }),
-      rendezvous: (c) => rendezvous(c.env as Bindings)
+      rendezvous: (c) => rendezvous(c.env as Bindings),
+      page: async (c, path) => {
+        const response = await (c.env as Bindings).ASSETS.fetch(new URL(path, c.req.url));
+        // A copy: responses from fetch() have immutable headers, and the app adds its own.
+        return response.ok ? new Response(response.body, response) : undefined;
+      }
     });
     return app.fetch(request, env, ctx);
   }

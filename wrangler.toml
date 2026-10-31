@@ -11,6 +11,7 @@ workers_dev = false
 # Pages (sign-in, device approval, the bootstrap). Everything else reaches the Worker.
 [assets]
 directory = "public"
+binding = "ASSETS"
 html_handling = "drop-trailing-slash"
 
 # Created with: wrangler d1 create codeflower-tunnel --jurisdiction eu

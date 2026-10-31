@@ -209,3 +209,33 @@ test('pages are served with a strict content security policy, and nothing outsid
   }
   for (const path of ['/package.json', '/src/app.ts', '/device.html/x']) assert.equal((await fetch(base + path)).status, 404, path);
 });
+
+test('the bootstrap answers every path under /m/, and the pairing page /p', async () => {
+  for (const path of ['/m/eu_abc/', '/m/eu_abc/api/workers', '/p']) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200, path);
+    assert.match(response.headers.get('Content-Security-Policy') ?? '', /script-src 'self'/);
+  }
+  assert.match(await (await fetch(`${base}/m/x/`)).text(), /tunnel\/m\.js/);
+});
+
+test('a connector can replace its key and remove itself, with its token only', async () => {
+  const cookie = await userWithSession('frank');
+  const { connectorId, token } = await register(cookie);
+  const call = (method: string, path: string, bearer: string, body?: unknown) =>
+    fetch(base + path, {
+      method,
+      headers: { Authorization: `Bearer ${bearer}`, 'Content-Type': 'application/json', [PROTOCOL_HEADER]: String(PROTOCOL) },
+      body: body === undefined ? undefined : JSON.stringify(body)
+    });
+  const newKey = Buffer.alloc(32, 9).toString('base64url');
+  assert.equal((await call('PUT', '/api/connector/key', 'wrong', { publicKey: newKey })).status, 401);
+  assert.equal((await call('PUT', '/api/connector/key', token, { publicKey: 'short' })).status, 400);
+  assert.equal((await call('PUT', '/api/connector/key', token, { publicKey: newKey })).status, 200);
+  const [row] = (await db.select().from(schema.connectors)).filter((connector) => connector.id === connectorId);
+  assert.equal(row.publicKey, newKey);
+
+  assert.equal((await call('DELETE', '/api/connector', token)).status, 200);
+  assert.equal((await db.select().from(schema.connectors)).some((connector) => connector.id === connectorId), false);
+  assert.equal((await call('DELETE', '/api/connector', token)).status, 401);
+});

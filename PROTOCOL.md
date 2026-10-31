@@ -91,6 +91,85 @@ those below `minProtocol` get the 426 at once.
 
 ## End-to-end layer
 
-Specified with the connector and browser implementations (codeflower-app and codeflower-ui):
-Noise `IK` (`Noise_IK_25519_ChaChaPoly_SHA256`) per stream, the browser knowing the connector's
-static key from pairing, then a request envelope (`http` or `ws`). The tunnel is not involved.
+Between browser and connector only; the tunnel passes the frames on. Implemented
+in codeflower-app (`internal/tunnel`, on flynn/noise) and codeflower-ui
+(`src/tunnel`). Their tests share fixed vectors (`noise-vectors.json`), so both
+produce the same bytes.
+
+### Keys and pairing
+
+- The connector and each browser have a static X25519 key pair. Keys travel as
+  unpadded base64url.
+- **Fingerprint** of a key: SHA-256 of its base64url text, first 16 hex digits,
+  in groups of four (`1a2b 3c4d 5e6f 7a8b`). The CLI, the account page and the
+  pairing page show it.
+- `codeflower tunnel pair` writes a one-time secret (valid 10 minutes, stored
+  hashed) and prints `<tunnel>/p#<connectorId>.<connectorKey>.<secret>`. The
+  fragment never reaches the tunnel. The pairing page takes it from the address,
+  removes it, shows the connector key's fingerprint, and opens a stream with the
+  secret in its hello. The connector then adds the browser's static key to its
+  paired devices, and the secret is used up.
+- From then on, the connector accepts the browser by its static key alone. It
+  refuses unknown keys, and revoking a device (`codeflower tunnel revoke`)
+  closes its open streams.
+
+### Handshake
+
+`Noise_IK_25519_ChaChaPoly_SHA256`. The browser is the initiator and knows the
+connector's static key from pairing. The prologue is the UTF-8 text
+`codeflower-tunnel/1 <connectorId>`.
+
+1. Browser → connector, the first binary frame after `ready`: message 1
+   (`e, es, s, ss`). Its payload is JSON:
+   `{"v": 1, "pair": "<secret>"?, "device": "<name>"?}`.
+2. Connector → browser: message 2 (`e, ee, se`). Its payload is JSON: `{"v": 1}`,
+   or `{"v": 1, "error": "not_paired" | "pairing_expired" | "off"}`, after which
+   the connector closes the stream. A browser that cannot complete the handshake
+   is talking to another key and must stop.
+
+After the handshake, each binary frame is one Noise transport message: at most
+65535 bytes, with nonces counting messages. A dropped, repeated or reordered
+frame fails to decrypt and ends the stream.
+
+### Envelope
+
+The plaintext of each transport message is one kind byte, then data:
+
+| Kind | Direction | Data |
+| --- | --- | --- |
+| 1 open | browser → | JSON `{"kind": "http" \| "ws", "method"?, "path", "headers"?}`, the first message |
+| 2 head | → browser | JSON `{"status", "headers"}` (HTTP) |
+| 3 data | both | a chunk of an HTTP body, at most 60000 bytes |
+| 4 end | both | the end of an HTTP body |
+| 5 text, 6 binary | both | a WebSocket message, or its last part |
+| 9 text part, 10 binary part | both | a part of a longer WebSocket message (up to 32 MiB in all) |
+| 7 close | both | JSON `{"code", "reason"?}`: closes the WebSocket, or refuses the request |
+| 8 accepted | → browser | the WebSocket is open |
+
+An HTTP stream carries `open`, `data`…, `end` one way and `head`, `data`…, `end`
+the other, then closes. A WebSocket stream (only `/api/workers/{id}/acp`, a chat)
+carries `open`, then `accepted` or `close`, then messages both ways. The
+connector closes chats after 30 idle minutes.
+
+The connector passes requests to `codeflower client`, which serves remote
+browsers less than its local page (see codeflower-app's `internal/client/remote.go`).
+
+### Pages
+
+The tunnel serves the browser code from codeflower-ui's tunnel build (copied with
+`npm run vendor-ui`; hashes in `ui-hashes.json`, checked by
+`codeflower tunnel verify`):
+
+- `/p`: the pairing page.
+- `/m/<connectorId>/`: the bootstrap. It installs the service worker (`/sw.js`,
+  scope `/m/`), which fetches everything under `/m/<connectorId>/` from the
+  connector through encrypted streams. So the app's page and its code come from
+  the user's computer. Chats open their own streams, because service workers
+  cannot intercept WebSockets.
+
+## Connector endpoints
+
+With the connector's bearer token and the protocol header:
+
+- `PUT /api/connector/key {"publicKey"}`: the new key after `codeflower tunnel rotate`.
+- `DELETE /api/connector`: removes the connector (`codeflower tunnel logout`).

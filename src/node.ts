@@ -66,7 +66,8 @@ export function createServerApp(env: Env, db: Db) {
     config,
     db: () => db,
     rendezvous: () => rendezvous,
-    page: (path) => {
+    servesPages: true,
+    page: (_c, path) => {
       const page = served.get(path);
       return page && new Response(page.body, { headers: { 'Content-Type': page.type } });
     }

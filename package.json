@@ -16,7 +16,8 @@
     "dev:node": "TUNNEL_DB=.dev/tunnel.sqlite PUBLIC_URL=http://localhost:8787 COOKIE_SECRET=dev-only-secret-dev-only-secret node --watch src/node.ts",
     "dev:worker": "wrangler dev",
     "deploy": "wrangler d1 migrations apply codeflower-tunnel --remote && wrangler deploy",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "vendor-ui": "node scripts/vendor-ui.ts"
   },
   "dependencies": {
     "@hono/node-server": "^1.19.11",

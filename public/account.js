@@ -39,7 +39,7 @@ function resumeNext() {
   } catch {
     return false;
   }
-  if (next && next.startsWith('/device?')) {
+  if (next && (next.startsWith('/device?') || next === '/p')) {
     location.assign(next);
     return true;
   }
@@ -68,6 +68,12 @@ async function renderConnectors() {
     const details = span(`key ${connector.fingerprint} · last seen ${date(connector.lastSeenAt)}`, 'muted');
     const left = document.createElement('div');
     left.append(title, document.createElement('br'), details);
+    const open = document.createElement('a');
+    open.className = 'button';
+    open.href = `/m/${encodeURIComponent(connector.id)}/`;
+    open.textContent = 'Open';
+    const actions = document.createElement('div');
+    actions.className = 'row';
     const revoke = button(
       'Revoke',
       async () => {
@@ -77,7 +83,8 @@ async function renderConnectors() {
       },
       'danger'
     );
-    list.append(item(left, revoke));
+    actions.append(open, revoke);
+    list.append(item(left, actions));
   }
 }
 

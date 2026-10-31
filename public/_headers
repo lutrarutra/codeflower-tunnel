@@ -1,0 +1,9 @@
+# Cloudflare serves these files without running the Worker, so the headers the
+# Worker sets elsewhere (src/app.ts) are repeated here. Self-hosted, the Node
+# server sets them itself and ignores this file.
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: no-referrer
+  Cross-Origin-Opener-Policy: same-origin

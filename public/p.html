@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pair this browser</title>
+    <link rel="icon" href="/icon.svg" />
+    <link rel="stylesheet" href="/style.css" />
+    <script type="module" crossorigin src="/tunnel/p.js"></script>
+  </head>
+  <body>
+    <main>
+      <header>
+        <img src="/icon.svg" alt="" />
+        <h1>Pair this browser</h1>
+      </header>
+
+      <section id="error" class="error" role="alert" hidden></section>
+
+      <section id="sign-in" hidden>
+        <p>Sign in to the tunnel first, with the account your computer signed in with. You come back here after.</p>
+        <a class="button" id="sign-in-link" href="/">Sign in</a>
+      </section>
+
+      <section id="confirm" hidden>
+        <p>Pair this browser with the computer that printed the link. Then it can use code flower there, end-to-end encrypted.</p>
+        <ul class="list">
+          <li><span>Computer's key fingerprint</span><code id="fingerprint"></code></li>
+        </ul>
+        <p class="muted gap-top">It must match the fingerprint <code>codeflower tunnel pair</code> printed.</p>
+        <p>
+          <label for="device">This browser's name</label><br />
+          <input id="device" maxlength="80" />
+        </p>
+        <div class="row">
+          <button class="primary" id="pair">Pair</button>
+        </div>
+      </section>
+
+      <section id="done" hidden>
+        <p>Paired. This browser can now open code flower on that computer while <code>codeflower client</code> runs there.</p>
+        <a class="button" id="open">Open code flower</a>
+      </section>
+    </main>
+  </body>
+</html>

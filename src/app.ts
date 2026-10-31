@@ -20,8 +20,10 @@ export interface Platform {
   config: Config;
   db(c: Context): Db;
   rendezvous(c: Context): Rendezvous;
-  /** The page at `path`, when the platform serves pages through the app (self-hosted). */
-  page?(path: string): Response | undefined;
+  /** The page at `path` (a file in public/, as served), or undefined. */
+  page(c: Context, path: string): Response | undefined | Promise<Response | undefined>;
+  /** Serve every page through the app (self-hosted); Cloudflare serves them before the Worker runs. */
+  servesPages?: boolean;
 }
 
 /** Hex SHA-256 of the key, grouped: what both the CLI and the page show. */
@@ -71,7 +73,9 @@ export function createApp(platform: Platform): Hono {
 
   // What connectors check before anything else; see "Versioning" in PROTOCOL.md.
   app.get('/api/version', (c) => c.json(versionInfo()));
-  for (const path of ['/api/device/code', '/api/device/token', '/connect', '/connect/*']) app.use(path, requireProtocol());
+  for (const path of ['/api/device/code', '/api/device/token', '/api/connector', '/api/connector/*', '/connect', '/connect/*']) {
+    app.use(path, requireProtocol());
+  }
 
   const requireUser = async (c: Context): Promise<string | undefined> => sessionUser(c, config);
 
@@ -286,6 +290,24 @@ export function createApp(platform: Platform): Hono {
     return c.json({ connectorId: id, token });
   });
 
+  // A connector managing itself, with its token.
+  app.put('/api/connector/key', async (c) => {
+    const connector = await connectorFor(c);
+    if (!connector) return c.json({ error: 'unauthorized' }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as { publicKey?: unknown };
+    if (!validPublicKey(body.publicKey)) return c.json({ error: 'publicKey must be a base64url X25519 key' }, 400);
+    await platform.db(c).update(schema.connectors).set({ publicKey: body.publicKey }).where(eq(schema.connectors.id, connector.id));
+    return c.json({ ok: true, fingerprint: await fingerprint(body.publicKey) });
+  });
+
+  app.delete('/api/connector', async (c) => {
+    const connector = await connectorFor(c);
+    if (!connector) return c.json({ error: 'unauthorized' }, 401);
+    await platform.db(c).delete(schema.connectors).where(eq(schema.connectors.id, connector.id));
+    await platform.rendezvous(c).disconnect(connector.id);
+    return c.json({ ok: true });
+  });
+
   // Sockets.
   app.get('/connect', async (c) => {
     const connector = await connectorFor(c);
@@ -315,10 +337,10 @@ export function createApp(platform: Platform): Hono {
     return platform.rendezvous(c).accept(c, id, 'browser');
   });
 
-  if (platform.page) {
-    const page = platform.page.bind(platform);
-    app.get('*', (c) => page(c.req.path) ?? c.notFound());
-  }
+  // The app's page through the tunnel: the bootstrap installs the service
+  // worker that fetches everything under /m/{connector}/ from the connector.
+  app.get('/m/*', async (c) => (await platform.page(c, '/m')) ?? c.notFound());
+  if (platform.servesPages) app.get('*', async (c) => (await platform.page(c, c.req.path)) ?? c.notFound());
 
   app.onError((error, c) => {
     console.error(error);
