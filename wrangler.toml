@@ -3,16 +3,21 @@ main = "src/worker.ts"
 compatibility_date = "2026-10-01"
 compatibility_flags = ["nodejs_compat"]
 
+# Passkeys are bound to this domain: changing it means users register their passkeys again.
+routes = [{ pattern = "tunnels.codeflower.app", custom_domain = true }]
+# Only the custom domain: no second, unannounced origin on workers.dev.
+workers_dev = false
+
 # Pages (sign-in, device approval, the bootstrap). Everything else reaches the Worker.
 [assets]
 directory = "public"
 html_handling = "drop-trailing-slash"
 
-# Create once: wrangler d1 create codeflower-tunnel --jurisdiction eu
+# Created with: wrangler d1 create codeflower-tunnel --jurisdiction eu
 [[d1_databases]]
 binding = "DB"
 database_name = "codeflower-tunnel"
-database_id = "replace-with-the-id-wrangler-printed"
+database_id = "9764bf0c-fb28-4aa4-b3bd-5d51417eba1e"
 migrations_dir = "migrations"
 
 [[durable_objects.bindings]]
@@ -24,7 +29,7 @@ tag = "v1"
 new_sqlite_classes = ["ConnectorHub"]
 
 [vars]
-PUBLIC_URL = "https://tunnel.example.org"
+PUBLIC_URL = "https://tunnels.codeflower.app"
 # Secrets, set with `wrangler secret put`: COOKIE_SECRET, GITHUB_CLIENT_ID,
 # GITHUB_CLIENT_SECRET, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET.
 # For `wrangler dev`, put them in .dev.vars.

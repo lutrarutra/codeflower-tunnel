@@ -46,26 +46,11 @@ process; it does not scale out across machines.
 
 ## On Cloudflare
 
-Once:
-
-```sh
-npx wrangler d1 create codeflower-tunnel --jurisdiction eu   # put the printed ID in wrangler.toml
-npx wrangler secret put COOKIE_SECRET                         # and the OAuth client IDs and secrets
-```
-
-Set `PUBLIC_URL` in `wrangler.toml` to the tunnel's domain. Then connect the GitHub repository in
-the Cloudflare dashboard (Workers & Pages → the worker → Settings → Builds), with:
-
-- build command: `npm ci && npm test`
-- deploy command: `npm run deploy` (applies new D1 migrations, then deploys)
-- production branch: `main`
-
-Every push to `main` then tests, migrates and deploys. Migrations must keep the previous release
-working (add columns and tables, don't drop or rename them in the same release), because sockets of
-the old release keep running until the new one takes over.
-
-Each connector gets one Durable Object, which pairs its sockets and stores nothing. Connectors
-registered as EU-only (`eu_…` IDs) get theirs in the EU jurisdiction. Accounts live in D1.
+The hosted tunnel deploys from this repository with Cloudflare Workers Builds:
+see [DEPLOY.md](DEPLOY.md) for the one-time setup (CI fields, secrets, OAuth
+apps). Each connector gets one Durable Object, which pairs its sockets and
+stores nothing. Connectors registered as EU-only (`eu_…` IDs) get theirs in the
+EU jurisdiction. Accounts live in D1.
 
 ## Development
 
