@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
 import test, { after, before } from 'node:test';
-import { serve, type ServerType } from '@hono/node-server';
+import { serve } from '@hono/node-server';
 import WebSocket from 'ws';
 import { sign } from '../src/crypto.ts';
 import { schema, type Db } from '../src/db/index.ts';
@@ -13,30 +13,38 @@ import { createServerApp, openDatabase } from '../src/node.ts';
 import { MIN_PROTOCOL, PROTOCOL, PROTOCOL_HEADER } from '../src/version.ts';
 
 const SECRET = 'test-secret-test-secret-test-secret';
-let http: ServerType;
 let base: string;
 let db: Db;
-let stopRendezvous: () => void;
+let stop: () => void;
 
-before(async () => {
-  db = openDatabase(':memory:');
-  // The public URL must match the port, which is only known once listening: reserve one first.
+/** A server on a free port, sharing `db`; the public URL must match the port, so one is reserved first. */
+async function start(env: Record<string, string> = {}) {
   const probe = serve({ fetch: () => new Response(), port: 0, hostname: '127.0.0.1' });
   await once(probe, 'listening');
   const port = (probe.address() as AddressInfo).port;
   await new Promise((resolve) => probe.close(resolve));
-  base = `http://127.0.0.1:${port}`;
-  const { server, injectWebSocket, rendezvous } = createServerApp({ PUBLIC_URL: base, COOKIE_SECRET: SECRET }, db);
-  stopRendezvous = () => rendezvous.close();
-  http = serve({ fetch: server.fetch, port, hostname: '127.0.0.1' });
-  injectWebSocket(http);
-  await once(http, 'listening');
+  const url = `http://127.0.0.1:${port}`;
+  const { server, injectWebSocket, rendezvous } = createServerApp({ PUBLIC_URL: url, COOKIE_SECRET: SECRET, ...env }, db);
+  const listening = serve({ fetch: server.fetch, port, hostname: '127.0.0.1' });
+  injectWebSocket(listening);
+  await once(listening, 'listening');
+  return {
+    url,
+    stop: () => {
+      rendezvous.close();
+      listening.close();
+    }
+  };
+}
+
+before(async () => {
+  db = openDatabase(':memory:');
+  const started = await start();
+  base = started.url;
+  stop = started.stop;
 });
 
-after(() => {
-  stopRendezvous();
-  http.close();
-});
+after(() => stop());
 
 async function userWithSession(id: string): Promise<string> {
   await db.insert(schema.users).values({ id, displayName: id, createdAt: Date.now() });
@@ -80,8 +88,8 @@ async function register(cookie: string, region: 'eu' | 'any' = 'any') {
   return result;
 }
 
-function socket(path: string, headers: Record<string, string>): WebSocket {
-  return new WebSocket(base.replace('http', 'ws') + path, { headers: { [PROTOCOL_HEADER]: String(PROTOCOL), ...headers } });
+function socket(path: string, headers: Record<string, string>, on = base): WebSocket {
+  return new WebSocket(on.replace('http', 'ws') + path, { headers: { [PROTOCOL_HEADER]: String(PROTOCOL), ...headers } });
 }
 
 function nextMessage(ws: WebSocket): Promise<{ data: Buffer | string; binary: boolean }> {
@@ -110,6 +118,8 @@ test('a registered connector and its owner exchange binary frames through a stre
   const ready = nextMessage(browser);
   const request = JSON.parse((await opened).data as string);
   assert.equal(request.type, 'open');
+  // The connector learns where the browser connects from.
+  assert.equal(request.ip, '127.0.0.1');
 
   const connector = socket(`/connect/streams/${request.stream}`, { Authorization: `Bearer ${token}` });
   await once(connector, 'open');
@@ -146,6 +156,41 @@ test('browsers reach only their own connectors, from the tunnel\'s own pages', a
   assert.equal(await status({ Cookie: stranger, Origin: base }), 404);
   assert.equal(await status({ Cookie: owner, Origin: 'https://evil.example' }), 403);
   assert.equal(await status({ Origin: base }), 401);
+});
+
+test('with ALLOWED_IPS, only browsers at those addresses open streams; the proxy names the address', async () => {
+  const cookie = await userWithSession('grace');
+  const { connectorId, token } = await register(cookie);
+  const guarded = await start({ ALLOWED_IPS: '10.0.0.0/8, 2001:db8::1', CLIENT_IP_HEADER: 'X-Forwarded-For' });
+  try {
+    const control = socket('/connect', { Authorization: `Bearer ${token}` }, guarded.url);
+    await once(control, 'open');
+    const status = (forwardedFor?: string) =>
+      new Promise<number>((resolve) => {
+        const headers: Record<string, string> = { Cookie: cookie, Origin: guarded.url };
+        if (forwardedFor) headers['X-Forwarded-For'] = forwardedFor;
+        const ws = socket(`/c/${connectorId}/stream`, headers, guarded.url);
+        ws.once('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0));
+        ws.once('open', () => {
+          ws.close();
+          resolve(101);
+        });
+      });
+    const opened = nextMessage(control);
+    // The last address is the one the proxy saw; earlier ones are the client's to forge.
+    assert.equal(await status('10.9.9.9, 10.1.2.3'), 101);
+    assert.equal(JSON.parse((await opened).data as string).ip, '10.1.2.3');
+    assert.equal(await status('2001:db8:0::1'), 101);
+    assert.equal(await status('10.1.2.3, 203.0.113.4'), 403);
+    assert.equal(await status(), 403);
+    control.close();
+  } finally {
+    guarded.stop();
+  }
+});
+
+test('ALLOWED_IPS refuses entries that are not addresses or ranges', () => {
+  assert.throws(() => createServerApp({ PUBLIC_URL: base, COOKIE_SECRET: SECRET, ALLOWED_IPS: '10.0.0.0/33' }, db), /ALLOWED_IPS/);
 });
 
 test('a stream to an offline connector closes with 4404', async () => {

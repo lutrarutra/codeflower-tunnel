@@ -38,6 +38,8 @@ connectors at it: `tunnel.url` in `~/.codeflower/config.yaml`.
 | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` | enables Google sign-in (callback: `<PUBLIC_URL>/auth/google/callback`) |
 | `REQUIRE_GITHUB_2FA` | `false` admits GitHub accounts without two-factor authentication |
 | `WEBAUTHN_RP_ID` | the passkeys' domain, if not `PUBLIC_URL`'s host |
+| `ALLOWED_IPS` | addresses and CIDR ranges, separated by commas or spaces, e.g. `203.0.113.0/24, 2001:db8::/32`: browsers elsewhere cannot open streams (403). Unset admits all. |
+| `CLIENT_IP_HEADER` | behind a reverse proxy, the header it puts the client's address in (`X-Real-IP`, or `X-Forwarded-For`, of which the last address counts). Unset uses the socket's address. Set it only when the proxy overwrites or appends to that header, or clients can forge it. |
 | `PORT`, `HOST` | where to listen (8787, all interfaces) |
 
 Passkey sign-in always works. The database migrates itself at startup. Back it up by copying

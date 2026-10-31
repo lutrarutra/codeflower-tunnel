@@ -5,6 +5,7 @@ import { mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { serve } from '@hono/node-server';
+import { getConnInfo } from '@hono/node-server/conninfo';
 import { createNodeWebSocket } from '@hono/node-ws';
 import Database from 'better-sqlite3';
 import { drizzle } from 'drizzle-orm/better-sqlite3';
@@ -67,6 +68,9 @@ export function createServerApp(env: Env, db: Db) {
     config,
     db: () => db,
     rendezvous: () => rendezvous,
+    // Behind a proxy, the last address in its header is the one the proxy saw.
+    clientIp: (c) =>
+      config.clientIpHeader ? c.req.header(config.clientIpHeader)?.split(',').at(-1)?.trim() : getConnInfo(c).remote.address,
     servesPages: true,
     page: (_c, path) => {
       const page = served.get(path);

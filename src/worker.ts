@@ -64,11 +64,12 @@ export class ConnectorHub extends DurableObject<Bindings> {
     const url = new URL(request.url);
     const role = url.searchParams.get('role') as hub.Role;
     const stream = url.searchParams.get('stream') ?? undefined;
+    const ip = url.searchParams.get('ip') ?? undefined;
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     // Accepted first: a socket must be accepted before it can be closed.
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ role, stream, openedAt: Date.now(), added: false } satisfies Attachment);
+    server.serializeAttachment({ role, stream, ip, openedAt: Date.now(), added: false } satisfies Attachment);
     const peer = this.peer(server);
     this.pending = server;
     try {
@@ -127,10 +128,11 @@ function stub(env: Bindings, connectorId: string) {
 }
 
 const rendezvous = (env: Bindings): Rendezvous => ({
-  accept(c: Context, connectorId, role, stream) {
+  accept(c: Context, connectorId, role, { stream, ip } = {}) {
     const url = new URL('https://hub/');
     url.searchParams.set('role', role);
     if (stream) url.searchParams.set('stream', stream);
+    if (ip) url.searchParams.set('ip', ip);
     return stub(env, connectorId).fetch(new Request(url, c.req.raw));
   },
   online: (connectorId) => stub(env, connectorId).online(),
@@ -145,6 +147,7 @@ export default {
       config: readConfig(env),
       db: (c) => drizzle((c.env as Bindings).DB, { schema }),
       rendezvous: (c) => rendezvous(c.env as Bindings),
+      clientIp: (c) => c.req.header('CF-Connecting-IP'),
       page: async (c, path) => {
         const response = await (c.env as Bindings).ASSETS.fetch(new URL(path, c.req.url));
         // A copy: responses from fetch() have immutable headers, and the app adds its own.

@@ -4,7 +4,7 @@
 import type { Context } from 'hono';
 import type { UpgradeWebSocket, WSContext } from 'hono/ws';
 import * as hub from './hub.ts';
-import type { Rendezvous } from './rendezvous.ts';
+import type { Rendezvous, SocketDetails } from './rendezvous.ts';
 
 class PeerSet implements hub.Peers {
   readonly peers = new Set<hub.Peer>();
@@ -37,13 +37,13 @@ export class MemoryRendezvous implements Rendezvous {
     return peers;
   }
 
-  accept(c: Context, connectorId: string, role: hub.Role, stream?: string): Response | Promise<Response> {
+  accept(c: Context, connectorId: string, role: hub.Role, { stream, ip }: SocketDetails = {}): Response | Promise<Response> {
     const peers = this.peersOf(connectorId);
     let peer: hub.Peer | undefined;
     const handler = this.upgradeWebSocket(() => ({
       onOpen: (_event, ws: WSContext) => {
         const opened: hub.Peer = {
-          info: { role, stream, openedAt: this.now() },
+          info: { role, stream, ip, openedAt: this.now() },
           send: (data) => ws.send(data),
           close: (code, reason) => ws.close(code, reason)
         };

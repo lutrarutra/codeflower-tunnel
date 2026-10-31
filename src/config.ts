@@ -1,6 +1,8 @@
 // The tunnel's settings, read from environment variables on both platforms:
 // Worker bindings and secrets on Cloudflare, process.env when self-hosted.
 
+import { parseRange, type Range } from './ip.ts';
+
 export interface OAuthClient {
   clientId: string;
   clientSecret: string;
@@ -17,6 +19,10 @@ export interface Config {
   webauthnRpId: string;
   /** GitHub accounts without two-factor authentication are refused unless this is false. */
   requireGithub2fa: boolean;
+  /** Browsers may open streams only from these addresses and ranges; empty admits all. */
+  allowedIps: Range[];
+  /** Self-hosted behind a reverse proxy: the header it puts the client's address in. */
+  clientIpHeader?: string;
 }
 
 export type Env = Record<string, unknown>;
@@ -34,6 +40,17 @@ function client(env: Env, prefix: string): OAuthClient | undefined {
   return { clientId, clientSecret };
 }
 
+function ranges(env: Env, name: string): Range[] {
+  return (text(env, name) ?? '')
+    .split(/[\s,]+/)
+    .filter(Boolean)
+    .map((entry) => {
+      const range = parseRange(entry);
+      if (!range) throw new Error(`${name}: "${entry}" is not an IP address or CIDR range`);
+      return range;
+    });
+}
+
 export function readConfig(env: Env): Config {
   const url = text(env, 'PUBLIC_URL');
   if (!url) throw new Error('Set PUBLIC_URL, e.g. https://tunnel.example.org');
@@ -46,7 +63,9 @@ export function readConfig(env: Env): Config {
     github: client(env, 'GITHUB'),
     google: client(env, 'GOOGLE'),
     webauthnRpId: text(env, 'WEBAUTHN_RP_ID') ?? publicUrl.hostname,
-    requireGithub2fa: text(env, 'REQUIRE_GITHUB_2FA') !== 'false'
+    requireGithub2fa: text(env, 'REQUIRE_GITHUB_2FA') !== 'false',
+    allowedIps: ranges(env, 'ALLOWED_IPS'),
+    clientIpHeader: text(env, 'CLIENT_IP_HEADER')
   };
 }
 

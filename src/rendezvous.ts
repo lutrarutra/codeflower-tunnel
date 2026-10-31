@@ -8,10 +8,17 @@ import type { Role } from './hub.ts';
  */
 export interface Rendezvous {
   /** Answers the WebSocket upgrade in `c` as one of the connector's sockets. */
-  accept(c: Context, connectorId: string, role: Role, stream?: string): Response | Promise<Response>;
+  accept(c: Context, connectorId: string, role: Role, details?: SocketDetails): Response | Promise<Response>;
   online(connectorId: string): Promise<boolean>;
   /** Closes all of the connector's sockets (it was revoked). */
   disconnect(connectorId: string): Promise<void>;
+}
+
+export interface SocketDetails {
+  /** The stream a connector socket dials back for. */
+  stream?: string;
+  /** A browser's address. */
+  ip?: string;
 }
 
 export type Region = 'eu' | 'any';

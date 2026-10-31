@@ -57,6 +57,16 @@ test('a browser stream asks the connector to dial back, then frames pass unchang
   assert.deepEqual(frame(browser, 1), new Uint8Array([4]));
 });
 
+test('the open message carries the browser\'s address when known', () => {
+  const peers = peerSet();
+  const control = fakePeer('control');
+  hub.attachControl(peers, control);
+  const browser = fakePeer('browser');
+  browser.info.ip = '203.0.113.4';
+  hub.openStream(peers, browser, () => 's1');
+  assert.deepEqual(control.sent, ['{"type":"open","stream":"s1","ip":"203.0.113.4"}']);
+});
+
 test('a stream to an offline connector is closed with 4404', () => {
   const peers = peerSet();
   const browser = fakePeer('browser');

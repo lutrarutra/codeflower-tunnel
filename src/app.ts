@@ -7,6 +7,7 @@ import { csrf } from 'hono/csrf';
 import { secureHeaders } from 'hono/secure-headers';
 import { authRoutes } from './auth.ts';
 import type { Config } from './config.ts';
+import { inRanges, normalizeAddress } from './ip.ts';
 import { fromBase64url, randomId, randomToken, sha256Hex, userCode } from './crypto.ts';
 import { schema, type Db } from './db/index.ts';
 import { connectorId, type Region, type Rendezvous } from './rendezvous.ts';
@@ -20,6 +21,8 @@ export interface Platform {
   config: Config;
   db(c: Context): Db;
   rendezvous(c: Context): Rendezvous;
+  /** The browser's address as the platform sees it, if known. */
+  clientIp(c: Context): string | undefined;
   /** The page at `path` (a file in public/, as served), or undefined. */
   page(c: Context, path: string): Response | undefined | Promise<Response | undefined>;
   /** Serve every page through the app (self-hosted); Cloudflare serves them before the Worker runs. */
@@ -319,12 +322,18 @@ export function createApp(platform: Platform): Hono {
   app.get('/connect/streams/:stream', async (c) => {
     const connector = await connectorFor(c);
     if (!connector) return c.json({ error: 'unauthorized' }, 401);
-    return platform.rendezvous(c).accept(c, connector.id, 'connector', c.req.param('stream'));
+    return platform.rendezvous(c).accept(c, connector.id, 'connector', { stream: c.req.param('stream') });
   });
 
   app.get('/c/:connectorId/stream', async (c) => {
     // WebSockets are not bound by CORS: refuse other sites' pages outright.
     if (c.req.header('Origin') !== config.publicUrl.origin) return c.json({ error: 'wrong origin' }, 403);
+    const raw = platform.clientIp(c);
+    const ip = raw === undefined ? undefined : normalizeAddress(raw);
+    // An unknown address is refused too: the allowlist fails closed.
+    if (config.allowedIps.length > 0 && !(ip && inRanges(ip, config.allowedIps))) {
+      return c.json({ error: 'address_not_allowed', message: 'This address may not reach connectors' }, 403);
+    }
     const userId = await requireUser(c);
     if (!userId) return c.json({ error: 'Sign in first' }, 401);
     const id = c.req.param('connectorId');
@@ -334,7 +343,7 @@ export function createApp(platform: Platform): Hono {
       .from(schema.connectors)
       .where(and(eq(schema.connectors.id, id), eq(schema.connectors.userId, userId)));
     if (!owned) return c.json({ error: 'No such connector' }, 404);
-    return platform.rendezvous(c).accept(c, id, 'browser');
+    return platform.rendezvous(c).accept(c, id, 'browser', { ip });
   });
 
   // The app's page through the tunnel: the bootstrap installs the service

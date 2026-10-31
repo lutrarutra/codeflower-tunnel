@@ -40,11 +40,17 @@ authenticate with the session cookie, and the tunnel refuses any `Origin` other 
 Opening a stream:
 
 1. The browser opens `/c/{connectorId}/stream`. The tunnel picks a stream ID and sends
-   `{"type":"open","stream":"<id>"}` (text) on the connector's control socket.
+   `{"type":"open","stream":"<id>","ip":"203.0.113.4"}` (text) on the connector's control socket.
+   `ip` is the browser's address as the tunnel sees it (IPv4-mapped IPv6 addresses written as
+   IPv4), left out when unknown. Connectors show it when a device connects; they must not rely
+   on it, since only the tunnel vouches for it.
 2. The connector dials `/connect/streams/<id>` within 15 s.
 3. The tunnel sends the browser one text frame, `{"type":"ready"}`. From then on, each binary frame
    from one end is delivered unchanged to the other. Endpoints send only binary frames on streams.
 4. Closing either end closes the other with the same code.
+
+A tunnel with an allowlist (`ALLOWED_IPS`) answers browsers from other addresses `403
+{"error": "address_not_allowed"}` instead of opening the stream.
 
 The control socket answers the text frame `ping` with `pong` (connectors send it every 30 s).
 Nothing else is sent to the tunnel on the control socket.

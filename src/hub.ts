@@ -11,6 +11,8 @@ export interface PeerInfo {
   role: Role;
   /** The stream a browser or connector socket belongs to. */
   stream?: string;
+  /** A browser's address, passed on to the connector. */
+  ip?: string;
   openedAt: number;
   /** Set when the hub closed it: it may linger until its close event. */
   closing?: boolean;
@@ -95,7 +97,7 @@ export function openStream(peers: Peers, peer: Peer, makeId: () => string = rand
   }
   peer.info.stream = makeId();
   peers.add(peer);
-  control.send(JSON.stringify({ type: 'open', stream: peer.info.stream }));
+  control.send(JSON.stringify({ type: 'open', stream: peer.info.stream, ip: peer.info.ip }));
   return true;
 }
 
