@@ -179,6 +179,17 @@ The tunnel serves the browser code from codeflower-ui's tunnel build (copied wit
   connector through encrypted streams. So the app's page and its code come from
   the user's computer. Chats open their own streams, because service workers
   cannot intercept WebSockets.
+- The page shows the sandboxes of every computer the browser is paired with: it
+  reads the pairings from IndexedDB, joins them with `GET /api/connectors` for
+  names and whether each is online, and asks each computer under its own
+  `/m/<connectorId>/api/…`. As it loads, it moves once to the page of the
+  online computer whose app is newest (`pageApi`, then `version`, in its
+  `/api/system`).
+- The service worker keeps the page's code (`*.js`, `*.css`, `assets/…`) in a
+  cache per connector and build: `index.html` names its build
+  (`<meta name="codeflower-build">`), and a new build replaces the cache, so a
+  reload asks the connector only for `index.html`. When a computer cannot be
+  reached, its error page links to the page from the other online computers.
 
 ## Connector endpoints
 

@@ -20,10 +20,11 @@
   <a href="https://docs.codeflower.app">docs.codeflower.app</a>
 </p>
 
-The relay between your browser and the code flower app on your machine. It routes end-to-end
-encrypted frames it cannot read, so neither a hacked tunnel nor a stolen account alone gives access to
-your sandboxes. It runs on Cloudflare Workers (the hosted tunnel) or as one Node process with a SQLite
-file (self-hosted).
+The relay between your browser and the code flower app on your machines. It routes end-to-end
+encrypted frames it cannot read, so a stolen account alone gives no access to your sandboxes, and
+neither does a hacked tunnel as long as the small browser code it serves is the published one
+(`codeflower tunnel verify` checks it; see [docs/SECURITY.md](docs/SECURITY.md)). It runs on
+Cloudflare Workers (the hosted tunnel) or as one Node process with a SQLite file (self-hosted).
 
 ## Use
 

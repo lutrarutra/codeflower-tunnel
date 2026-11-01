@@ -18,6 +18,10 @@ not in public issues.
 - **The bootstrap page is a residual risk.** A compromised tunnel could serve a page that leaks
   keys. Its published hash and `codeflower tunnel verify` narrow this risk but cannot remove it in a browser;
   the local `codeflower client` page stays the fully trusted way in.
+- **Every computer a browser is paired with can reach the others through it.** The page under
+  `/m/<connector>/` comes from that computer, and all of the browser's pairings live on the
+  tunnel's origin, so the page shows and uses the sandboxes of every paired computer (the page
+  of the computer with the newest app runs). Pair a browser only with computers you trust alike.
 - **A paired device that is stolen** can control your agents, i.e. run code inside your
   sandboxes. The app's notices name each device that connects and the address the tunnel saw
   ("Phone connected from 203.0.113.4"), so use from an unexpected place stands out. Revoke it with `codeflower tunnel revoke`, or cut all remote access with
