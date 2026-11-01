@@ -53,7 +53,14 @@ A tunnel with an allowlist (`ALLOWED_IPS`) answers browsers from other addresses
 {"error": "address_not_allowed"}` instead of opening the stream.
 
 The control socket answers the text frame `ping` with `pong` (connectors send it every 30 s).
-Nothing else is sent to the tunnel on the control socket.
+A control socket without a `ping` for 90 s is closed with 4408: a computer that sleeps or loses
+its network sends no close. The connector's last seen time is when its control socket closed, or
+for one closed that way, its last `ping`.
+The only other frame a connector sends on it is its status, `{"type":"status","sandboxes":2}`
+(text): how many sandboxes it runs that paired browsers may reach, when it connects and whenever
+that changes. The tunnel keeps it with the socket, not in its database, to show the account page's
+connectors with their sandboxes; it ignores anything else, and tunnels from before the status
+ignore it too, so it needs no new protocol version.
 
 Limits: binary frames up to 256 KiB, 64 open streams per connector. Close codes:
 
@@ -62,7 +69,7 @@ Limits: binary frames up to 256 KiB, 64 open streams per connector. Close codes:
 | 4000 | replaced by a newer control socket |
 | 4401 | not authorized, or the connector was revoked |
 | 4404 | the connector is offline |
-| 4408 | the connector did not dial back in time |
+| 4408 | the connector did not dial back in time, or its control socket stopped pinging |
 | 4429 | too many open streams |
 | 1003 | a text frame was sent on a stream |
 | 1009 | a frame was too large |

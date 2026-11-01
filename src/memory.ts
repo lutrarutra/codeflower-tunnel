@@ -22,13 +22,29 @@ export class MemoryRendezvous implements Rendezvous {
   private readonly upgradeWebSocket: UpgradeWebSocket;
   private readonly now: () => number;
 
-  constructor(upgradeWebSocket: UpgradeWebSocket, now: () => number = Date.now) {
+  /** Records when a connector was last seen, once its control socket is gone. */
+  private readonly seen: (connectorId: string, at: number) => void;
+
+  constructor(
+    upgradeWebSocket: UpgradeWebSocket,
+    seen: (connectorId: string, at: number) => void = () => {},
+    now: () => number = Date.now
+  ) {
     this.upgradeWebSocket = upgradeWebSocket;
+    this.seen = seen;
     this.now = now;
     this.timer = setInterval(() => {
-      for (const peers of this.connectors.values()) hub.sweep(peers, this.now());
+      for (const [connectorId, peers] of this.connectors) {
+        hub.sweep(peers, this.now());
+        this.expire(connectorId, peers);
+      }
     }, 1000);
     this.timer.unref?.();
+  }
+
+  private expire(connectorId: string, peers: PeerSet): void {
+    const lost = hub.expire(peers, this.now());
+    if (lost !== undefined) this.seen(connectorId, lost);
   }
 
   private peersOf(connectorId: string): PeerSet {
@@ -49,18 +65,25 @@ export class MemoryRendezvous implements Rendezvous {
         };
         peer = opened;
         if (role === 'control') hub.attachControl(peers, opened);
-        else if (role === 'browser') hub.openStream(peers, opened);
+        else if (role === 'browser') {
+          this.expire(connectorId, peers);
+          hub.openStream(peers, opened);
+        }
         else hub.attachConnectorStream(peers, opened);
       },
       onMessage: (event, ws) => {
         if (!peer || peer.info.closing || !peers.peers.has(peer)) return;
-        if (role === 'control' && event.data === 'ping') return ws.send('pong');
+        if (role === 'control' && event.data === 'ping') {
+          peer.info.pingedAt = this.now();
+          return ws.send('pong');
+        }
         const data = event.data;
         hub.message(peers, peer, typeof data === 'string' ? data : (data as ArrayBuffer));
       },
       onClose: (event) => {
         if (!peer) return;
         if (peers.peers.has(peer)) hub.closed(peers, peer, event.code, event.reason);
+        if (role === 'control') this.seen(connectorId, hub.closedAt(peer.info, this.now()));
         peers.peers.delete(peer);
         if (peers.peers.size === 0) this.connectors.delete(connectorId);
       }
@@ -68,9 +91,11 @@ export class MemoryRendezvous implements Rendezvous {
     return handler(c, async () => {}) as Promise<Response>;
   }
 
-  async online(connectorId: string): Promise<boolean> {
+  async status(connectorId: string): Promise<hub.Status> {
     const peers = this.connectors.get(connectorId);
-    return peers !== undefined && hub.isOnline(peers);
+    if (!peers) return { online: false };
+    this.expire(connectorId, peers);
+    return hub.status(peers);
   }
 
   async disconnect(connectorId: string): Promise<void> {

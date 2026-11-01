@@ -111,7 +111,17 @@ test('a registered connector and its owner exchange binary frames through a stre
   await once(control, 'open');
   const listed = await json(await fetch(`${base}/api/connectors`, { headers: { Cookie: cookie } }));
   assert.equal(listed[0].online, true);
+  assert.equal(listed[0].sandboxes, undefined);
   assert.match(listed[0].fingerprint, /^[0-9a-f]{4}( [0-9a-f]{4}){3}$/);
+  control.send('{"type":"status","sandboxes":3}');
+  await assert.doesNotReject(async () => {
+    for (let tries = 0; tries < 50; tries++) {
+      const [connector] = await json(await fetch(`${base}/api/connectors`, { headers: { Cookie: cookie } }));
+      if (connector.sandboxes === 3) return;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error('the status did not arrive');
+  });
 
   const opened = nextMessage(control);
   const browser = socket(`/c/${connectorId}/stream`, { Cookie: cookie, Origin: base });
@@ -140,6 +150,25 @@ test('a registered connector and its owner exchange binary frames through a stre
   const again = socket('/connect', { Authorization: `Bearer ${token}` });
   const refused = await new Promise<number>((resolve) => again.once('unexpected-response', (_req, res) => resolve(res.statusCode ?? 0)));
   assert.equal(refused, 401);
+});
+
+test('a connector is last seen when its control socket closes', async () => {
+  const cookie = await userWithSession('heidi');
+  const { token } = await register(cookie);
+  const control = socket('/connect', { Authorization: `Bearer ${token}` });
+  await once(control, 'open');
+  const [connected] = await json(await fetch(`${base}/api/connectors`, { headers: { Cookie: cookie } }));
+  await new Promise((resolve) => setTimeout(resolve, 20));
+  // Not a clean close: as when the computer's process is killed.
+  control.terminate();
+  let listed: any;
+  for (let tries = 0; tries < 50; tries++) {
+    [listed] = await json(await fetch(`${base}/api/connectors`, { headers: { Cookie: cookie } }));
+    if (!listed.online && listed.lastSeenAt > connected.lastSeenAt) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal(listed.online, false);
+  assert.ok(listed.lastSeenAt > connected.lastSeenAt, 'last seen is when it closed, not when it connected');
 });
 
 test('browsers reach only their own connectors, from the tunnel\'s own pages', async () => {

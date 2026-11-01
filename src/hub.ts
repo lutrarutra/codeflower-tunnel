@@ -16,6 +16,10 @@ export interface PeerInfo {
   openedAt: number;
   /** Set when the hub closed it: it may linger until its close event. */
   closing?: boolean;
+  /** How many sandboxes a control socket's connector reports running. */
+  sandboxes?: number;
+  /** When a control socket last sent `ping`. */
+  pingedAt?: number;
 }
 
 export interface Peer {
@@ -33,6 +37,8 @@ export interface Peers {
 export const MAX_FRAME = 256 * 1024;
 export const MAX_STREAMS = 64;
 export const DIAL_BACK_MS = 15_000;
+/** A control socket without a `ping` for this long is gone (connectors ping every 30 s). */
+export const STALE_MS = 90_000;
 
 export const CLOSE = {
   replaced: 4000,
@@ -117,15 +123,33 @@ function size(data: string | ArrayBuffer | ArrayBufferView): number {
   return typeof data === 'string' ? data.length : data.byteLength;
 }
 
+/** The most sandboxes a status may report; more are counted as this many. */
+export const MAX_SANDBOXES = 1000;
+
 /** A frame from any socket of this connector. */
 export function message(peers: Peers, peer: Peer, data: string | ArrayBuffer): void {
-  if (peer.info.role === 'control') return; // `ping` is answered by the platform; nothing else is expected
+  // `ping` is answered by the platform; the connector's status is the only other frame.
+  if (peer.info.role === 'control') return controlMessage(peer, data);
   const other = partner(peers, peer);
   if (typeof data === 'string') return closeStream(peers, peer, CLOSE.textFrame, 'Streams carry binary frames only');
   if (size(data) > MAX_FRAME) return closeStream(peers, peer, CLOSE.tooBig, 'Frame too large');
   // Before `ready` there is no partner; a browser that sends early loses the frame and the stream.
   if (!other) return closeStream(peers, peer, CLOSE.timeout, 'The stream is not open yet');
   other.send(data);
+}
+
+function controlMessage(peer: Peer, data: string | ArrayBuffer): void {
+  if (typeof data !== 'string' || data.length > 1024) return;
+  let status: { type?: unknown; sandboxes?: unknown };
+  try {
+    status = JSON.parse(data);
+  } catch {
+    return;
+  }
+  const count = status?.sandboxes;
+  if (status?.type === 'status' && Number.isInteger(count) && (count as number) >= 0) {
+    peer.info.sandboxes = Math.min(count as number, MAX_SANDBOXES);
+  }
 }
 
 function closeStream(peers: Peers, peer: Peer, code: number, reason: string): void {
@@ -156,6 +180,37 @@ export function disconnectAll(peers: Peers, reason: string): void {
   for (const peer of live(peers)) safeClose(peer, CLOSE.unauthorized, reason);
 }
 
-export function isOnline(peers: Peers): boolean {
-  return find(peers, 'control') !== undefined;
+/** When the connector was last heard from on this control socket. */
+export function seenAt(info: PeerInfo): number {
+  return Math.max(info.openedAt, info.pingedAt ?? 0);
+}
+
+/**
+ * Closes a control socket that stopped pinging: a computer that slept or lost
+ * its network sends no close. Returns when it was last seen, if it closed one.
+ */
+export function expire(peers: Peers, now: number): number | undefined {
+  const control = find(peers, 'control');
+  if (!control || now - seenAt(control.info) < STALE_MS) return undefined;
+  safeClose(control, CLOSE.timeout, 'No ping from the connector');
+  return seenAt(control.info);
+}
+
+/**
+ * When a closed control socket's connector was last seen: now, unless the hub
+ * closed it (replaced or stale), when it was its last ping.
+ */
+export function closedAt(info: PeerInfo, now: number): number {
+  return info.closing ? seenAt(info) : now;
+}
+
+export interface Status {
+  online: boolean;
+  /** Left out while offline, and for connectors that do not report it. */
+  sandboxes?: number;
+}
+
+export function status(peers: Peers): Status {
+  const control = find(peers, 'control');
+  return control ? { online: true, sandboxes: control.info.sandboxes } : { online: false };
 }

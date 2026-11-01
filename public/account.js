@@ -53,38 +53,62 @@ async function request(path, method) {
   return result;
 }
 
+/** Sandboxes it runs, as "online · 2 sandboxes"; connectors that do not report them say only "online". */
+function presence(connector) {
+  if (!connector.online) return 'offline';
+  if (connector.sandboxes === undefined) return 'online';
+  return `online · ${connector.sandboxes} ${connector.sandboxes === 1 ? 'sandbox' : 'sandboxes'}`;
+}
+
+/** Shown in full: online with sandboxes, or online without saying how many. */
+const active = (connector) => connector.online && connector.sandboxes !== 0;
+
+/** Last seen, newest first: a connected one is seen now. */
+const seen = (connector) => (connector.online ? Infinity : (connector.lastSeenAt ?? 0));
+
+function connectorItem(connector) {
+  const title = span(connector.name);
+  if (connector.region === 'eu') title.append(span('EU only', 'badge eu'));
+  title.append(span(presence(connector), connector.online ? 'badge online' : 'badge'));
+  const details = span(
+    `key ${connector.fingerprint} · ${connector.online ? 'connected' : 'last seen'} ${date(connector.lastSeenAt)}`,
+    'muted'
+  );
+  const left = document.createElement('div');
+  left.append(title, document.createElement('br'), details);
+  const open = document.createElement('a');
+  open.className = 'button';
+  open.href = `/m/${encodeURIComponent(connector.id)}/`;
+  open.textContent = 'Open';
+  const actions = document.createElement('div');
+  actions.className = 'row';
+  const revoke = button(
+    'Revoke',
+    async () => {
+      if (!confirm(`Revoke ${connector.name}? It must sign in again, and paired browsers must pair again.`)) return;
+      await request(`/api/connectors/${encodeURIComponent(connector.id)}`, 'DELETE').catch((error) => showError(error.message));
+      await renderConnectors();
+    },
+    'danger'
+  );
+  actions.append(open, revoke);
+  return item(left, actions);
+}
+
 async function renderConnectors() {
   const list = $('connectors');
-  const connectors = await request('/api/connectors', 'GET');
-  list.replaceChildren();
+  const idle = $('idle');
+  const connectors = (await request('/api/connectors', 'GET')).sort((a, b) => seen(b) - seen(a));
+  const shown = connectors.filter(active);
+  const collapsed = connectors.filter((connector) => !active(connector));
+  list.replaceChildren(...shown.map(connectorItem));
+  $('idle-connectors').replaceChildren(...collapsed.map(connectorItem));
+  idle.hidden = collapsed.length === 0;
+  $('idle-summary').textContent = `${collapsed.length} without sandboxes online`;
   if (connectors.length === 0) {
     list.append(item(span('None yet. Run codeflower tunnel login on the machine with your sandboxes.', 'muted')));
-    return;
-  }
-  for (const connector of connectors) {
-    const title = span(connector.name);
-    if (connector.region === 'eu') title.append(span('EU only', 'badge eu'));
-    title.append(span(connector.online ? 'online' : 'offline', connector.online ? 'badge online' : 'badge'));
-    const details = span(`key ${connector.fingerprint} · last seen ${date(connector.lastSeenAt)}`, 'muted');
-    const left = document.createElement('div');
-    left.append(title, document.createElement('br'), details);
-    const open = document.createElement('a');
-    open.className = 'button';
-    open.href = `/m/${encodeURIComponent(connector.id)}/`;
-    open.textContent = 'Open';
-    const actions = document.createElement('div');
-    actions.className = 'row';
-    const revoke = button(
-      'Revoke',
-      async () => {
-        if (!confirm(`Revoke ${connector.name}? It must sign in again, and paired browsers must pair again.`)) return;
-        await request(`/api/connectors/${encodeURIComponent(connector.id)}`, 'DELETE').catch((error) => showError(error.message));
-        await renderConnectors();
-      },
-      'danger'
-    );
-    actions.append(open, revoke);
-    list.append(item(left, actions));
+  } else if (shown.length === 0) {
+    list.append(item(span('No sandboxes are online.', 'muted')));
   }
 }
 

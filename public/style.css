@@ -132,6 +132,10 @@ ul.list li:first-child {
   border-top: 0;
 }
 
+details > summary {
+  cursor: pointer;
+}
+
 code {
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 0.9em;

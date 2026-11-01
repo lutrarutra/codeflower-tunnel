@@ -13,7 +13,7 @@ import { migrate } from 'drizzle-orm/better-sqlite3/migrator';
 import { Hono } from 'hono';
 import { createApp } from './app.ts';
 import { readConfig, type Env } from './config.ts';
-import { schema, type Db } from './db/index.ts';
+import { recordSeen, schema, type Db } from './db/index.ts';
 import { MemoryRendezvous } from './memory.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -62,7 +62,9 @@ export function createServerApp(env: Env, db: Db) {
   const config = readConfig(env);
   const server = new Hono();
   const ws = createNodeWebSocket({ app: server });
-  const rendezvous = new MemoryRendezvous(ws.upgradeWebSocket);
+  const rendezvous = new MemoryRendezvous(ws.upgradeWebSocket, (connectorId, at) => {
+    recordSeen(db, connectorId, at).catch((error) => console.error('could not record when a connector was last seen', error));
+  });
   const served = pages();
   const app = createApp({
     config,

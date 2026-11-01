@@ -1,5 +1,5 @@
 import type { Context } from 'hono';
-import type { Role } from './hub.ts';
+import type { Role, Status } from './hub.ts';
 
 /**
  * Where a connector's sockets meet: a Durable Object per connector on
@@ -9,7 +9,12 @@ import type { Role } from './hub.ts';
 export interface Rendezvous {
   /** Answers the WebSocket upgrade in `c` as one of the connector's sockets. */
   accept(c: Context, connectorId: string, role: Role, details?: SocketDetails): Response | Promise<Response>;
-  online(connectorId: string): Promise<boolean>;
+  /**
+   * Whether the connector is connected, and how many sandboxes it runs. A
+   * control socket that stopped pinging is closed first, and when it was last
+   * seen recorded, as when a control socket closes.
+   */
+  status(connectorId: string): Promise<Status>;
   /** Closes all of the connector's sockets (it was revoked). */
   disconnect(connectorId: string): Promise<void>;
 }

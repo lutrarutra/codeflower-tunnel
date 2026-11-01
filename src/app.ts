@@ -164,8 +164,13 @@ export function createApp(platform: Platform): Hono {
   app.get('/api/connectors', async (c) => {
     const userId = await requireUser(c);
     if (!userId) return c.json({ error: 'Sign in first' }, 401);
-    const rows = await platform.db(c).select().from(schema.connectors).where(eq(schema.connectors.userId, userId));
+    const db = platform.db(c);
+    const owned = eq(schema.connectors.userId, userId);
     const rendezvous = platform.rendezvous(c);
+    // Statuses first: one that finds a connection gone records when it was last seen.
+    const ids = await db.select({ id: schema.connectors.id }).from(schema.connectors).where(owned);
+    const statuses = new Map(await Promise.all(ids.map(async ({ id }) => [id, await rendezvous.status(id)] as const)));
+    const rows = await db.select().from(schema.connectors).where(owned);
     return c.json(
       await Promise.all(
         rows.map(async (row) => ({
@@ -175,7 +180,7 @@ export function createApp(platform: Platform): Hono {
           fingerprint: await fingerprint(row.publicKey),
           createdAt: row.createdAt,
           lastSeenAt: row.lastSeenAt,
-          online: await rendezvous.online(row.id)
+          ...(statuses.get(row.id) ?? { online: false })
         }))
       )
     );

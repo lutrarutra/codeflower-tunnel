@@ -72,7 +72,45 @@ test('a stream to an offline connector is closed with 4404', () => {
   const browser = fakePeer('browser');
   assert.equal(hub.openStream(peers, browser), false);
   assert.equal(browser.closedWith?.code, hub.CLOSE.offline);
-  assert.equal(hub.isOnline(peers), false);
+  assert.deepEqual(hub.status(peers), { online: false });
+});
+
+test('the connector reports how many sandboxes it runs on its control socket', () => {
+  const peers = peerSet();
+  const control = fakePeer('control');
+  hub.attachControl(peers, control);
+  assert.deepEqual(hub.status(peers), { online: true, sandboxes: undefined });
+  hub.message(peers, control, '{"type":"status","sandboxes":2}');
+  assert.deepEqual(hub.status(peers), { online: true, sandboxes: 2 });
+  // Anything else leaves it as it was, and the socket open.
+  for (const other of ['ping', 'not json', '{"type":"status","sandboxes":-1}', '{"type":"status","sandboxes":1.5}', '{"type":"other","sandboxes":3}']) {
+    hub.message(peers, control, other);
+  }
+  hub.message(peers, control, bytes(1));
+  assert.deepEqual(hub.status(peers), { online: true, sandboxes: 2 });
+  assert.equal(control.closedWith, undefined);
+  hub.message(peers, control, `{"type":"status","sandboxes":${hub.MAX_SANDBOXES + 1}}`);
+  assert.equal(hub.status(peers).sandboxes, hub.MAX_SANDBOXES);
+});
+
+test('a control socket that stopped pinging is closed, and its connector last seen at its last ping', () => {
+  const peers = peerSet();
+  const control = fakePeer('control', undefined, 1000);
+  hub.attachControl(peers, control);
+  control.info.pingedAt = 31_000;
+  assert.equal(hub.expire(peers, 31_000 + hub.STALE_MS - 1), undefined);
+  assert.equal(hub.status(peers).online, true);
+  assert.equal(hub.expire(peers, 31_000 + hub.STALE_MS), 31_000);
+  assert.equal(control.closedWith?.code, hub.CLOSE.timeout);
+  assert.deepEqual(hub.status(peers), { online: false });
+  // Its close event, if one comes, records the same time.
+  assert.equal(hub.closedAt(control.info, 999_999), 31_000);
+});
+
+test('a control socket that closes by itself was last seen when it closed', () => {
+  const control = fakePeer('control', undefined, 1000);
+  control.info.pingedAt = 31_000;
+  assert.equal(hub.closedAt(control.info, 40_000), 40_000);
 });
 
 test('a new control socket replaces the old one, which gets no more streams', () => {

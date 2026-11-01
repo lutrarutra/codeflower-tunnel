@@ -7,7 +7,7 @@ import { drizzle } from 'drizzle-orm/d1';
 import type { Context, Hono } from 'hono';
 import { createApp } from './app.ts';
 import { readConfig } from './config.ts';
-import { schema } from './db/index.ts';
+import { recordSeen, schema } from './db/index.ts';
 import * as hub from './hub.ts';
 import { regionOf, type Rendezvous } from './rendezvous.ts';
 
@@ -21,6 +21,7 @@ interface Bindings {
 /** Each socket's hub state rides on it as its attachment, so it survives hibernation. */
 interface Attachment extends hub.PeerInfo {
   added: boolean;
+  connectorId: string;
 }
 
 export class ConnectorHub extends DurableObject<Bindings> {
@@ -32,6 +33,8 @@ export class ConnectorHub extends DurableObject<Bindings> {
 
   private peer(ws: WebSocket): hub.Peer {
     const info = ws.deserializeAttachment() as Attachment;
+    // The platform answers `ping` (even while hibernating) and keeps when it last did.
+    info.pingedAt = this.ctx.getWebSocketAutoResponseTimestamp(ws)?.getTime();
     return {
       info,
       send: (data) => ws.send(data),
@@ -60,16 +63,28 @@ export class ConnectorHub extends DurableObject<Bindings> {
   /** The socket `fetch` is accepting. */
   private pending: WebSocket | undefined;
 
+  private async seen(connectorId: string, at: number): Promise<void> {
+    await recordSeen(drizzle(this.env.DB, { schema }), connectorId, at);
+  }
+
+  /** Closes a control socket that stopped pinging, recording when it was last seen. */
+  private async expire(connectorId: string): Promise<void> {
+    const lost = hub.expire(this.peers(), Date.now());
+    if (lost !== undefined) await this.seen(connectorId, lost);
+  }
+
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
     const role = url.searchParams.get('role') as hub.Role;
     const stream = url.searchParams.get('stream') ?? undefined;
     const ip = url.searchParams.get('ip') ?? undefined;
+    const connectorId = url.searchParams.get('connector') ?? '';
+    if (role === 'browser') await this.expire(connectorId);
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     // Accepted first: a socket must be accepted before it can be closed.
     this.ctx.acceptWebSocket(server);
-    server.serializeAttachment({ role, stream, ip, openedAt: Date.now(), added: false } satisfies Attachment);
+    server.serializeAttachment({ role, stream, ip, openedAt: Date.now(), added: false, connectorId } satisfies Attachment);
     const peer = this.peer(server);
     this.pending = server;
     try {
@@ -87,6 +102,8 @@ export class ConnectorHub extends DurableObject<Bindings> {
     const peer = this.peer(ws);
     if (!(peer.info as Attachment).added || peer.info.closing) return;
     hub.message(this.peers(), peer, message);
+    // The connector's status, kept on its socket for after hibernation.
+    if (peer.info.role === 'control') ws.serializeAttachment(peer.info);
   }
 
   async webSocketClose(ws: WebSocket, code: number, reason: string): Promise<void> {
@@ -95,6 +112,7 @@ export class ConnectorHub extends DurableObject<Bindings> {
       (peer.info as Attachment).added = false;
       ws.serializeAttachment(peer.info);
       hub.closed(this.peers(), peer, code, reason);
+      if (peer.info.role === 'control') await this.seen((peer.info as Attachment).connectorId, hub.closedAt(peer.info, Date.now()));
     }
     try {
       ws.close(code === 1005 || code === 1006 ? 1000 : code, reason);
@@ -111,8 +129,9 @@ export class ConnectorHub extends DurableObject<Bindings> {
     if (hub.sweep(this.peers(), Date.now()) > 0) await this.ctx.storage.setAlarm(Date.now() + 1000);
   }
 
-  async online(): Promise<boolean> {
-    return hub.isOnline(this.peers());
+  async status(connectorId: string): Promise<hub.Status> {
+    await this.expire(connectorId);
+    return hub.status(this.peers());
   }
 
   async disconnect(): Promise<void> {
@@ -131,11 +150,12 @@ const rendezvous = (env: Bindings): Rendezvous => ({
   accept(c: Context, connectorId, role, { stream, ip } = {}) {
     const url = new URL('https://hub/');
     url.searchParams.set('role', role);
+    url.searchParams.set('connector', connectorId);
     if (stream) url.searchParams.set('stream', stream);
     if (ip) url.searchParams.set('ip', ip);
     return stub(env, connectorId).fetch(new Request(url, c.req.raw));
   },
-  online: (connectorId) => stub(env, connectorId).online(),
+  status: (connectorId) => stub(env, connectorId).status(connectorId),
   disconnect: (connectorId) => stub(env, connectorId).disconnect()
 });
 
