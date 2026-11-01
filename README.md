@@ -17,7 +17,7 @@
   &nbsp;·&nbsp;
   <b><img src="assets/icon.png" width="20" height="20" alt=""> tunnel</b>
   &nbsp;·&nbsp;
-  <a href="https://codeflower.dev">codeflower.dev</a>
+  <a href="https://docs.codeflower.app">docs.codeflower.app</a>
 </p>
 
 The relay between your browser and the code flower app on your machine. It routes end-to-end
