@@ -1,5 +1,5 @@
 // The tunnel's routes, the same on Cloudflare and self-hosted: the platform
-// passes in the database and the rendezvous. See PROTOCOL.md.
+// passes in the database and the rendezvous. See docs/PROTOCOL.md.
 
 import { and, eq, lt } from 'drizzle-orm';
 import { Hono, type Context } from 'hono';
@@ -74,7 +74,7 @@ export function createApp(platform: Platform): Hono {
 
   authRoutes(app, config, platform.db);
 
-  // What connectors check before anything else; see "Versioning" in PROTOCOL.md.
+  // What connectors check before anything else; see "Versioning" in docs/PROTOCOL.md.
   app.get('/api/version', (c) => c.json(versionInfo()));
   for (const path of ['/api/device/code', '/api/device/token', '/api/connector', '/api/connector/*', '/connect', '/connect/*']) {
     app.use(path, requireProtocol());
@@ -195,7 +195,7 @@ export function createApp(platform: Platform): Hono {
     return c.json({ ok: true });
   });
 
-  // Connector registration: the OAuth device flow (RFC 8628), see PROTOCOL.md.
+  // Connector registration: the OAuth device flow (RFC 8628), see docs/PROTOCOL.md.
   app.post('/api/device/code', async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { name?: unknown; region?: unknown; publicKey?: unknown };
     const name = typeof body.name === 'string' ? body.name.trim().slice(0, 64) : '';

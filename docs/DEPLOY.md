@@ -1,8 +1,8 @@
 # Deploying the hosted tunnel (tunnels.codeflower.app)
 
 How the hosted tunnel runs on Cloudflare, deployed by Cloudflare Workers Builds
-from this repository. Self-hosting is in the [README](README.md). What it costs and what
-Cloudflare's terms say: [docs/costs.md](docs/costs.md).
+from this repository. Self-hosting is in the [README](../README.md). What it costs and what
+Cloudflare's terms say: [docs/costs.md](costs.md).
 
 ## Already done
 

@@ -1,5 +1,5 @@
 // Which connectors this tunnel accepts. Connectors (codeflower-app) send their
-// protocol version with every request; see "Versioning" in PROTOCOL.md.
+// protocol version with every request; see "Versioning" in docs/PROTOCOL.md.
 //
 // A breaking change raises PROTOCOL and, once old connectors must stop,
 // MIN_PROTOCOL. Before raising MIN_PROTOCOL, set DEPRECATED: connectors read

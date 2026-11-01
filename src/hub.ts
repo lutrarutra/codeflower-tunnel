@@ -1,7 +1,7 @@
 // The rendezvous for one connector: its control socket and the streams
 // browsers open to it. The hub keeps no state of its own: everything it needs
 // is on the sockets (role, stream, when it opened), so a Durable Object can
-// hibernate and wake with nothing lost. See PROTOCOL.md.
+// hibernate and wake with nothing lost. See docs/PROTOCOL.md.
 
 import { randomId } from './crypto.ts';
 

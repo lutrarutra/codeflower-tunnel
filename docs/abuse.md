@@ -1,8 +1,8 @@
 # Traffic and abuse
 
 What passes through the tunnel, what it can and cannot be misused for, and the limits against
-that. The cryptography and the threat model are in [SECURITY.md](../SECURITY.md) and
-[PROTOCOL.md](../PROTOCOL.md).
+that. The cryptography and the threat model are in [SECURITY.md](SECURITY.md) and
+[PROTOCOL.md](PROTOCOL.md).
 
 ## What passes through
 
@@ -82,7 +82,7 @@ appends to that header.
 
 **Telling the owner.** When a browser opens a stream, the tunnel passes its address to the
 connector in the `open` message on the control socket (`"ip"`, see `src/hub.ts` and
-[PROTOCOL.md](../PROTOCOL.md)): `CF-Connecting-IP` on Cloudflare, the socket's address or
+[PROTOCOL.md](PROTOCOL.md)): `CF-Connecting-IP` on Cloudflare, the socket's address or
 `CLIENT_IP_HEADER` when self-hosted. The app's notice then says "Phone connected from
 203.0.113.4" (`announce` in codeflower-app's `internal/tunnel/connector.go`), and the connector's
 log says the same. It tells the user again at once when a device connects from a new address,

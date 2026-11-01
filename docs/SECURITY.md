@@ -26,4 +26,4 @@ not in public issues.
 
 The design and threat model are in the workspace's `docs/architecture.md`. What passes through
 the tunnel, how it can be misused and the limits against that are in
-[docs/abuse.md](docs/abuse.md).
+[abuse.md](abuse.md).
