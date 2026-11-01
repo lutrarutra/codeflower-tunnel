@@ -46,10 +46,20 @@ before(async () => {
 
 after(() => stop());
 
+/** Users by their session cookie, for confirmations. */
+const users = new Map<string, string>();
+
 async function userWithSession(id: string): Promise<string> {
   await db.insert(schema.users).values({ id, displayName: id, createdAt: Date.now() });
   const value = await sign(SECRET, { u: id, e: Math.floor(Date.now() / 1000) + 3600 });
+  users.set(`cft_session=${value}`, id);
   return `cft_session=${value}`;
+}
+
+/** The session cookie with a confirmation of `action` on `target`, as a passkey or signing in again gives it. */
+async function confirmed(cookie: string, action: string, target: string, seconds = 120): Promise<string> {
+  const value = await sign(SECRET, { u: users.get(cookie), a: action, t: target, e: Math.floor(Date.now() / 1000) + seconds });
+  return `${cookie}; cft_confirm=${value}`;
 }
 
 // Response bodies the tests inspect freely.
@@ -76,9 +86,17 @@ async function register(cookie: string, region: 'eu' | 'any' = 'any') {
   const pending = await json(await post('/api/device/token', { deviceCode: code.deviceCode }));
   assert.equal(pending.error, 'authorization_pending');
 
-  const info = await fetch(`${base}/api/device/${code.userCode}`, { headers: { Cookie: cookie } });
-  assert.equal((await json(info)).region, region);
-  assert.equal((await post('/api/device/approve', { userCode: code.userCode }, cookie)).status, 200);
+  const info = await json(await fetch(`${base}/api/device/${code.userCode}`, { headers: { Cookie: cookie } }));
+  assert.equal(info.region, region);
+  // When and from where it asked, for the approval page.
+  assert.equal(info.requestedFrom, '127.0.0.1');
+  assert.ok(Date.now() - info.requestedAt < 60_000);
+  // Approving needs a confirmation of this very code.
+  const refused = await post('/api/device/approve', { userCode: code.userCode }, cookie);
+  assert.equal(refused.status, 403);
+  assert.equal((await json(refused)).error, 'confirm_required');
+  assert.equal((await post('/api/device/approve', { userCode: code.userCode }, await confirmed(cookie, 'approve-device', 'ABCD-EFGH'))).status, 403);
+  assert.equal((await post('/api/device/approve', { userCode: code.userCode }, await confirmed(cookie, 'approve-device', code.userCode))).status, 200);
 
   const granted = await post('/api/device/token', { deviceCode: code.deviceCode });
   assert.equal(granted.status, 200);
@@ -144,7 +162,10 @@ test('a registered connector and its owner exchange binary frames through a stre
 
   // Revoking closes everything and the token stops working.
   const closed = Promise.all([closeCode(control), closeCode(browser), closeCode(connector)]);
-  const revoked = await fetch(`${base}/api/connectors/${connectorId}`, { method: 'DELETE', headers: { Cookie: cookie, Origin: base } });
+  const revoked = await fetch(`${base}/api/connectors/${connectorId}`, {
+    method: 'DELETE',
+    headers: { Cookie: await confirmed(cookie, 'delete-connector', connectorId), Origin: base }
+  });
   assert.equal(revoked.status, 200);
   assert.deepEqual(await closed, [4401, 4401, 4401]);
   const again = socket('/connect', { Authorization: `Bearer ${token}` });
@@ -237,10 +258,64 @@ test('deleting the account deletes its connectors and exports what is stored fir
   assert.equal(exported.connectors[0].id, connectorId);
   assert.equal(JSON.stringify(exported).includes('token'), false);
 
-  const deleted = await fetch(`${base}/api/me`, { method: 'DELETE', headers: { Cookie: cookie, Origin: base } });
+  // The session alone does not delete it, nor a confirmation of something else or an old one.
+  for (const attempt of [cookie, await confirmed(cookie, 'delete-connector', connectorId), await confirmed(cookie, 'delete-account', 'erin', -1)]) {
+    const refused = await fetch(`${base}/api/me`, { method: 'DELETE', headers: { Cookie: attempt, Origin: base } });
+    assert.equal(refused.status, 403);
+  }
+  const deleted = await fetch(`${base}/api/me`, { method: 'DELETE', headers: { Cookie: await confirmed(cookie, 'delete-account', 'erin'), Origin: base } });
   assert.equal(deleted.status, 200);
   const rows = await db.select().from(schema.connectors);
   assert.equal(rows.some((row) => row.id === connectorId), false);
+});
+
+test('confirming asks for a passkey of the account, or a linked provider without one', async () => {
+  const cookie = await userWithSession('fiona');
+  const options = (body: unknown) => post('/auth/confirm/options', body, cookie);
+  assert.equal((await options({ action: 'drop-tables', target: 'x' })).status, 400);
+  // No passkey, and no provider configured here: nothing to confirm with.
+  assert.deepEqual(await json(await options({ action: 'delete-account', target: 'fiona' })), { method: 'oauth', providers: [] });
+  await db.insert(schema.passkeys).values({ id: 'key-1', userId: 'fiona', publicKey: Buffer.alloc(32), counter: 0, transports: 'internal', createdAt: Date.now() });
+  const passkey = await json(await options({ action: 'delete-account', target: 'fiona' }));
+  assert.equal(passkey.method, 'passkey');
+  assert.deepEqual(passkey.options.allowCredentials.map((key: { id: string }) => key.id), ['key-1']);
+  assert.equal(passkey.options.userVerification, 'required');
+  // Signed out, nothing.
+  assert.equal((await post('/auth/confirm/options', { action: 'delete-account', target: 'fiona' })).status, 401);
+  // A signed-in account adds another passkey only once confirmed.
+  assert.equal((await json(await post('/auth/passkey/register/options', {}, cookie))).error, 'confirm_required');
+  assert.equal((await post('/auth/passkey/register/options', {}, await confirmed(cookie, 'add-passkey', 'fiona'))).status, 200);
+});
+
+test('signing out everywhere ends every other session at once', async () => {
+  const cookie = await userWithSession('gina');
+  const me = async (session: string) => (await json(await fetch(`${base}/api/me`, { headers: { Cookie: session } }))).user?.id;
+  assert.equal(await me(cookie), 'gina');
+  assert.equal((await post('/api/me/sign-out-everywhere', {}, cookie)).status, 403);
+  const done = await post('/api/me/sign-out-everywhere', {}, await confirmed(cookie, 'sign-out-everywhere', 'gina'));
+  assert.equal(done.status, 200);
+  // A copy of the old cookie no longer works; the browser that asked got a new one.
+  assert.equal(await me(cookie), undefined);
+  const renewed = done.headers.getSetCookie().find((header) => header.startsWith('cft_session='))!.split(';')[0]!;
+  assert.equal(await me(renewed), 'gina');
+});
+
+test('one address asks for at most 30 device codes a minute', async () => {
+  const limited = await start();
+  try {
+    const ask = () =>
+      fetch(`${limited.url}/api/device/code`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: limited.url, [PROTOCOL_HEADER]: String(PROTOCOL) },
+        body: JSON.stringify({ name: 'laptop', region: 'any', publicKey: PUBLIC_KEY })
+      });
+    for (let i = 0; i < 30; i++) assert.equal((await ask()).status, 200);
+    const refused = await ask();
+    assert.equal(refused.status, 429);
+    assert.equal((await json(refused)).error, 'rate_limited');
+  } finally {
+    limited.stop();
+  }
 });
 
 test('device codes need a name, a region and a 32-byte key', async () => {
@@ -292,6 +367,16 @@ test('the bootstrap answers every path under /m/, and the pairing page /p', asyn
   }
   assert.match(await (await fetch(`${base}/m/x/`)).text(), /tunnel\/m\.js/);
   for (const script of ['/tunnel/m.js', '/tunnel/p.js', '/sw.js']) assert.equal((await fetch(base + script)).status, 200, script);
+});
+
+test("a report's frame under /m/ is the app's empty frame document, which the page may frame", async () => {
+  const response = await fetch(`${base}/m/eu_abc/frame?load=2`);
+  assert.equal(response.status, 200);
+  const policy = response.headers.get('Content-Security-Policy') ?? '';
+  assert.match(policy, /^default-src 'none'; script-src 'unsafe-inline';/);
+  assert.match(policy, /frame-ancestors 'self'$/);
+  assert.equal(response.headers.get('X-Frame-Options'), null);
+  assert.match(await response.text(), /cf-frame-ready/);
 });
 
 test('a connector can replace its key and remove itself, with its token only', async () => {

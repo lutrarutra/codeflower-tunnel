@@ -13,7 +13,9 @@ All paths are relative to the tunnel's `PUBLIC_URL`.
    → `{"deviceCode", "userCode", "verificationUrl", "interval", "expiresIn"}`.
    The connector shows `userCode` and `verificationUrl` (`/device?code=ABCD-EFGH`).
 2. The user, signed in, opens the URL and approves (`POST /api/device/approve {"userCode"}`) or
-   denies (`POST /api/device/deny {"userCode"}`).
+   denies (`POST /api/device/deny {"userCode"}`). Approving needs a fresh confirmation (see
+   [Confirmed actions](#confirmed-actions)). The page shows when and from which address the code
+   was asked for.
 3. The connector polls `POST /api/device/token {"deviceCode"}` every `interval` seconds:
    - `400 {"error": "authorization_pending"}`: keep polling
    - `400 {"error": "access_denied" | "expired_token"}`: stop
@@ -190,6 +192,36 @@ The tunnel serves the browser code from codeflower-ui's tunnel build (copied wit
   (`<meta name="codeflower-build">`), and a new build replaces the cache, so a
   reload asks the connector only for `index.html`. When a computer cannot be
   reached, its error page links to the page from the other online computers.
+
+## Confirmed actions
+
+The session cookie alone does not change the account: code on the tunnel's origin (the pages
+paired computers serve under `/m/`) has it too. These need the user to confirm them just now:
+
+| Action | Request | Target |
+| --- | --- | --- |
+| `delete-account` | `DELETE /api/me` | the user ID |
+| `delete-connector` | `DELETE /api/connectors/{id}` | the connector ID |
+| `approve-device` | `POST /api/device/approve` | the user code |
+| `delete-passkey` | `DELETE /api/passkeys/{id}` | the passkey ID |
+| `add-passkey` | `POST /auth/passkey/register/options`, signed in | the user ID |
+| `sign-out-everywhere` | `POST /api/me/sign-out-everywhere` | the user ID |
+
+Without a confirmation they answer `403 {"error": "confirm_required", "action", "target"}`.
+`POST /auth/confirm/options {"action", "target"}` answers `{"method": "passkey", "options"}` (a
+WebAuthn assertion for the account's passkeys, with user verification, sent to
+`POST /auth/confirm/verify`) or, for an account without passkeys, `{"method": "oauth", "providers"}`:
+the page then opens `GET /auth/{provider}/confirm?action&target&next`, which signs in again at the
+provider (its account picker; for Google a fresh sign-in) and returns to `next` with `?confirmed=`.
+Either sets a signed cookie for that action and target, valid 2 minutes and used up by it.
+
+Signing out everywhere raises the user's session version, which every session cookie names, so other
+browsers' cookies stop working; removing a passkey does the same.
+
+## Rate limits
+
+`POST /api/device/code`, `/auth/passkey/*` and `/auth/confirm/*` answer at most 30 calls a minute per
+address and route group, then `429 {"error": "rate_limited"}`.
 
 ## Connector endpoints
 

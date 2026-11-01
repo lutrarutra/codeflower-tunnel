@@ -16,6 +16,7 @@
       </header>
 
       <section id="error" class="error" role="alert" hidden></section>
+      <section id="notice" class="notice" role="status" hidden></section>
 
       <section id="signed-out" hidden>
         <h2>Sign in</h2>
@@ -32,7 +33,10 @@
         <section>
           <div class="row spread">
             <h2 id="name"></h2>
-            <button id="logout">Sign out</button>
+            <div class="row">
+              <button id="logout">Sign out</button>
+              <button id="logout-everywhere" title="Ends every other browser's session too">Sign out everywhere else</button>
+            </div>
           </div>
         </section>
 

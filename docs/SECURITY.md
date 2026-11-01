@@ -22,6 +22,13 @@ not in public issues.
   `/m/<connector>/` comes from that computer, and all of the browser's pairings live on the
   tunnel's origin, so the page shows and uses the sandboxes of every paired computer (the page
   of the computer with the newest app runs). Pair a browser only with computers you trust alike.
+  What such a page cannot do: export the browser's key (it is a WebCrypto key that cannot be
+  exported, so it is only usable while the page runs), or change the tunnel account: deleting it or
+  a computer, approving a computer, adding or removing passkeys and signing out everywhere need a
+  fresh passkey or provider sign-in. Every computer's kept page code is dropped when a computer
+  refuses the browser or answers with another key.
+- **Signing out** on one browser leaves the others signed in; *Sign out everywhere else* on the account
+  page (or removing a passkey) ends every other session.
 - **A paired device that is stolen** can control your agents, i.e. run code inside your
   sandboxes. The app's notices name each device that connects and the address the tunnel saw
   ("Phone connected from 203.0.113.4"), so use from an unexpected place stands out. Revoke it with `codeflower tunnel revoke`, or cut all remote access with

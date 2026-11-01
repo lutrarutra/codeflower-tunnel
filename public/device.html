@@ -29,8 +29,10 @@
           <li><span>Name</span><strong id="name"></strong></li>
           <li><span>Route</span><strong id="region"></strong></li>
           <li><span>Key fingerprint</span><code id="fingerprint"></code></li>
+          <li><span>Asked</span><strong id="requested"></strong></li>
         </ul>
-        <p class="muted gap-top">Approve only if the code and fingerprint match what <code>codeflower tunnel login</code> printed.</p>
+        <p class="muted gap-top">Approve only if you just ran <code>codeflower tunnel login</code> yourself, and the code and fingerprint match what it printed.</p>
+        <p class="notice" id="confirmed" hidden>Confirmed. Approve again within two minutes to finish.</p>
         <div class="row">
           <button class="primary" id="approve">Approve</button>
           <button class="danger" id="deny">Deny</button>

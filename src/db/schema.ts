@@ -7,7 +7,9 @@ import { sqliteTable, text, integer, blob, primaryKey, index } from 'drizzle-orm
 export const users = sqliteTable('users', {
   id: text('id').primaryKey(),
   displayName: text('display_name').notNull(),
-  createdAt: integer('created_at').notNull()
+  createdAt: integer('created_at').notNull(),
+  /** Session cookies name it: raising it signs every browser out. */
+  sessionVersion: integer('session_version').notNull().default(0)
 });
 
 /** A GitHub or Google account that signs in as a user. */
@@ -69,5 +71,8 @@ export const deviceCodes = sqliteTable('device_codes', {
   publicKey: text('public_key').notNull(),
   status: text('status', { enum: ['pending', 'approved', 'denied'] }).notNull(),
   userId: text('user_id').references(() => users.id, { onDelete: 'cascade' }),
-  expiresAt: integer('expires_at').notNull()
+  expiresAt: integer('expires_at').notNull(),
+  /** When and from which address the connector asked: the approval page shows them. */
+  requestedAt: integer('requested_at'),
+  requestedFrom: text('requested_from')
 });

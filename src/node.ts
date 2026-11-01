@@ -15,6 +15,7 @@ import { createApp } from './app.ts';
 import { readConfig, type Env } from './config.ts';
 import { recordSeen, schema, type Db } from './db/index.ts';
 import { MemoryRendezvous } from './memory.ts';
+import { MemoryRateLimit } from './ratelimit.ts';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -66,6 +67,7 @@ export function createServerApp(env: Env, db: Db) {
     recordSeen(db, connectorId, at).catch((error) => console.error('could not record when a connector was last seen', error));
   });
   const served = pages();
+  const limits = new MemoryRateLimit();
   const app = createApp({
     config,
     db: () => db,
@@ -74,6 +76,7 @@ export function createServerApp(env: Env, db: Db) {
     clientIp: (c) =>
       config.clientIpHeader ? c.req.header(config.clientIpHeader)?.split(',').at(-1)?.trim() : getConnInfo(c).remote.address,
     servesPages: true,
+    rateLimit: (_c, key) => limits.allow(key),
     page: (_c, path) => {
       const page = served.get(path);
       return page && new Response(page.body, { headers: { 'Content-Type': page.type } });

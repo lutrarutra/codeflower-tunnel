@@ -11,8 +11,30 @@ import { inRanges, normalizeAddress } from './ip.ts';
 import { fromBase64url, randomId, randomToken, sha256Hex, userCode } from './crypto.ts';
 import { schema, type Db } from './db/index.ts';
 import { connectorId, type Region, type Rendezvous } from './rendezvous.ts';
-import { sessionUser, signOut } from './session.ts';
+import { sessionUser, signOut, signOutEverywhere, takeConfirmation, type ConfirmedAction } from './session.ts';
 import { requireProtocol, versionInfo } from './version.ts';
+
+/**
+ * The empty document an interactive report runs in: the app's GET /frame
+ * (codeflower-app's internal/client/frame.go), which this must match. The page
+ * frames it sandboxed without allow-same-origin, and browsers do not pass such
+ * a frame's request to the service worker, so under /m/ the tunnel answers it.
+ * It holds nothing: the frame gets the report from the page, by postMessage.
+ */
+const REPORT_FRAME = /^\/m\/[^/]+\/frame$/;
+const REPORT_POLICY =
+  "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; media-src data: blob:; worker-src blob:";
+export const FRAME_DOCUMENT = `<!doctype html><meta charset="utf-8"><script>
+addEventListener('message', function load(event) {
+  var message = event.data;
+  if (event.source !== parent || !message || message.type !== 'cf-load' || typeof message.html !== 'string') return;
+  removeEventListener('message', load);
+  document.open();
+  document.write(message.html);
+  document.close();
+});
+parent.postMessage({ type: 'cf-frame-ready' }, '*');
+</script>`;
 
 export const DEVICE_CODE_SECONDS = 600;
 export const MAX_CONNECTORS = 20;
@@ -27,6 +49,8 @@ export interface Platform {
   page(c: Context, path: string): Response | undefined | Promise<Response | undefined>;
   /** Serve every page through the app (self-hosted); Cloudflare serves them before the Worker runs. */
   servesPages?: boolean;
+  /** Whether one more call under `key` (an address and a route group) is allowed now; see ratelimit.ts. */
+  rateLimit?(c: Context, key: string): boolean | Promise<boolean>;
 }
 
 /** Hex SHA-256 of the key, grouped: what both the CLI and the page show. */
@@ -67,10 +91,22 @@ export function createApp(platform: Platform): Hono {
     referrerPolicy: 'no-referrer'
   });
   // Upgrade responses (from a Durable Object on Cloudflare) cannot take headers, and need none.
-  app.use((c, next) => (c.req.header('Upgrade')?.toLowerCase() === 'websocket' ? next() : headers(c, next)));
+  // A report's frame sets its own.
+  app.use((c, next) => (c.req.header('Upgrade')?.toLowerCase() === 'websocket' || REPORT_FRAME.test(c.req.path) ? next() : headers(c, next)));
   // Cookie-authenticated changes must come from our own pages.
   app.use('/api/*', csrf({ origin: config.publicUrl.origin }));
   app.use('/auth/*', csrf({ origin: config.publicUrl.origin }));
+
+  // Routes anyone can call that write or verify something: limited per address.
+  const limited = (group: string) => async (c: Context, next: () => Promise<void>) => {
+    if (platform.rateLimit && !(await platform.rateLimit(c, `${group}:${platform.clientIp(c) ?? 'unknown'}`))) {
+      return c.json({ error: 'rate_limited', message: 'Too many requests from this address. Try again in a minute.' }, 429);
+    }
+    return next();
+  };
+  app.use('/api/device/code', limited('device'));
+  app.use('/auth/passkey/*', limited('passkey'));
+  app.use('/auth/confirm/*', limited('confirm'));
 
   authRoutes(app, config, platform.db);
 
@@ -80,7 +116,17 @@ export function createApp(platform: Platform): Hono {
     app.use(path, requireProtocol());
   }
 
-  const requireUser = async (c: Context): Promise<string | undefined> => sessionUser(c, config);
+  const requireUser = async (c: Context): Promise<string | undefined> => sessionUser(c, config, platform.db(c));
+
+  /**
+   * Whether the user confirmed this action on this target just now (see
+   * POST /auth/confirm/options); the confirmation is used up. The pages ask
+   * for one when told `confirm_required`.
+   */
+  const confirmed = (c: Context, userId: string, action: ConfirmedAction, target: string) =>
+    takeConfirmation(c, config, userId, action, target);
+  const confirmRequired = (c: Context, action: ConfirmedAction, target: string) =>
+    c.json({ error: 'confirm_required', action, target, message: 'Confirm this with your passkey, or by signing in again.' }, 403);
 
   /** The connector a bearer token belongs to. */
   const connectorFor = async (c: Context) => {
@@ -142,6 +188,7 @@ export function createApp(platform: Platform): Hono {
   app.delete('/api/me', async (c) => {
     const userId = await requireUser(c);
     if (!userId) return c.json({ error: 'Sign in first' }, 401);
+    if (!(await confirmed(c, userId, 'delete-account', userId))) return confirmRequired(c, 'delete-account', userId);
     const db = platform.db(c);
     const owned = await db.select({ id: schema.connectors.id }).from(schema.connectors).where(eq(schema.connectors.userId, userId));
     await db.delete(schema.users).where(eq(schema.users.id, userId));
@@ -150,13 +197,26 @@ export function createApp(platform: Platform): Hono {
     return c.json({ ok: true });
   });
 
+  /** Signs out every other browser: their session cookies stop working. */
+  app.post('/api/me/sign-out-everywhere', async (c) => {
+    const userId = await requireUser(c);
+    if (!userId) return c.json({ error: 'Sign in first' }, 401);
+    if (!(await confirmed(c, userId, 'sign-out-everywhere', userId))) return confirmRequired(c, 'sign-out-everywhere', userId);
+    await signOutEverywhere(c, config, platform.db(c), userId);
+    return c.json({ ok: true });
+  });
+
   app.delete('/api/passkeys/:id', async (c) => {
     const userId = await requireUser(c);
     if (!userId) return c.json({ error: 'Sign in first' }, 401);
+    const id = c.req.param('id');
+    if (!(await confirmed(c, userId, 'delete-passkey', id))) return confirmRequired(c, 'delete-passkey', id);
     await platform
       .db(c)
       .delete(schema.passkeys)
-      .where(and(eq(schema.passkeys.id, c.req.param('id')), eq(schema.passkeys.userId, userId)));
+      .where(and(eq(schema.passkeys.id, id), eq(schema.passkeys.userId, userId)));
+    // A browser signed in with that passkey is signed out with it.
+    await signOutEverywhere(c, config, platform.db(c), userId);
     return c.json({ ok: true });
   });
 
@@ -190,6 +250,7 @@ export function createApp(platform: Platform): Hono {
     const userId = await requireUser(c);
     if (!userId) return c.json({ error: 'Sign in first' }, 401);
     const id = c.req.param('id');
+    if (!(await confirmed(c, userId, 'delete-connector', id))) return confirmRequired(c, 'delete-connector', id);
     const deleted = await platform
       .db(c)
       .delete(schema.connectors)
@@ -218,7 +279,10 @@ export function createApp(platform: Platform): Hono {
       region: body.region,
       publicKey: body.publicKey,
       status: 'pending',
-      expiresAt: Date.now() + DEVICE_CODE_SECONDS * 1000
+      expiresAt: Date.now() + DEVICE_CODE_SECONDS * 1000,
+      // Shown on the approval page, so a code someone else asked for stands out.
+      requestedAt: Date.now(),
+      requestedFrom: normalizeAddress(platform.clientIp(c) ?? '') ?? null
     });
     return c.json({
       deviceCode,
@@ -238,12 +302,18 @@ export function createApp(platform: Platform): Hono {
     return row && row.expiresAt > Date.now() ? row : undefined;
   };
 
-  /** What the approval page shows: the name, region and key fingerprint the CLI also prints. */
+  /** What the approval page shows: the name, region and key fingerprint the CLI also prints, and when and from where it asked. */
   app.get('/api/device/:code', async (c) => {
     if (!(await requireUser(c))) return c.json({ error: 'Sign in first' }, 401);
     const row = await pendingCode(c, c.req.param('code'));
     if (!row) return c.json({ error: 'This code is unknown or expired' }, 404);
-    return c.json({ name: row.name, region: row.region, fingerprint: await fingerprint(row.publicKey) });
+    return c.json({
+      name: row.name,
+      region: row.region,
+      fingerprint: await fingerprint(row.publicKey),
+      requestedAt: row.requestedAt,
+      requestedFrom: row.requestedFrom
+    });
   });
 
   for (const decision of ['approve', 'deny'] as const) {
@@ -253,6 +323,10 @@ export function createApp(platform: Platform): Hono {
       const body = (await c.req.json().catch(() => ({}))) as { userCode?: unknown };
       const row = typeof body.userCode === 'string' ? await pendingCode(c, body.userCode) : undefined;
       if (!row) return c.json({ error: 'This code is unknown or expired' }, 404);
+      // Denying needs no confirmation; approving adds a computer to the account.
+      if (decision === 'approve' && !(await confirmed(c, userId, 'approve-device', row.userCode))) {
+        return confirmRequired(c, 'approve-device', row.userCode);
+      }
       const db = platform.db(c);
       if (decision === 'approve') {
         const owned = await db.select({ id: schema.connectors.id }).from(schema.connectors).where(eq(schema.connectors.userId, userId));
@@ -353,6 +427,13 @@ export function createApp(platform: Platform): Hono {
 
   // The app's page through the tunnel: the bootstrap installs the service
   // worker that fetches everything under /m/{connector}/ from the connector.
+  app.get('/m/:connector/frame', (c) => {
+    c.header('Content-Security-Policy', `${REPORT_POLICY}; frame-ancestors 'self'`);
+    c.header('X-Content-Type-Options', 'nosniff');
+    c.header('Referrer-Policy', 'no-referrer');
+    c.header('Cache-Control', 'no-store');
+    return c.html(FRAME_DOCUMENT);
+  });
   app.get('/m/*', async (c) => (await platform.page(c, '/m')) ?? c.notFound());
   if (platform.servesPages) app.get('*', async (c) => (await platform.page(c, c.req.path)) ?? c.notFound());
 

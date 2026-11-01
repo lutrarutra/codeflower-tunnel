@@ -13,22 +13,51 @@ import {
 import type { Config } from './config.ts';
 import { randomId } from './crypto.ts';
 import { schema, type Db } from './db/index.ts';
-import { authorizationUrl, exchangeCode, generateCodeVerifier, generateState, idTokenClaims, type Provider } from './oauth.ts';
-import { sessionUser, signIn, signOut, takeFlow, writeFlow } from './session.ts';
+import { CONFIRM_PROMPT, authorizationUrl, exchangeCode, generateCodeVerifier, generateState, idTokenClaims, type Provider } from './oauth.ts';
+import {
+  CONFIRMED_ACTIONS,
+  sessionUser,
+  signIn,
+  signOut,
+  takeConfirmation,
+  takeFlow,
+  writeConfirmation,
+  writeFlow,
+  type ConfirmedAction
+} from './session.ts';
+
+/** An action the user confirms (see ConfirmedAction), and the page to go back to. */
+interface Confirming {
+  action: ConfirmedAction;
+  target: string;
+  next?: string;
+}
 
 interface OAuthFlow {
   kind: 'oauth';
   provider: Provider;
   state: string;
   verifier: string;
+  /** Signing in again to confirm an action, not to sign in. */
+  confirm?: Confirming;
 }
 
 interface PasskeyFlow {
   kind: 'passkey';
-  mode: 'register' | 'login';
+  mode: 'register' | 'login' | 'confirm';
   challenge: string;
   /** For a new account: the ID the passkey was created for. */
   newUserId?: string;
+  confirm?: Confirming;
+}
+
+/** The action and target a request names, if it is one that is confirmed. */
+function confirming(action: unknown, target: unknown, next?: unknown): Confirming | undefined {
+  if (typeof action !== 'string' || !CONFIRMED_ACTIONS.includes(action as ConfirmedAction)) return undefined;
+  if (typeof target !== 'string' || target.length > 200) return undefined;
+  // Only back to the tunnel's own account and approval pages.
+  const back = typeof next === 'string' && /^\/(device\?code=[A-Z0-9]{4}-[A-Z0-9]{4})?$/.test(next) ? next : undefined;
+  return { action: action as ConfirmedAction, target, next: back };
 }
 
 export class AuthError extends Error {}
@@ -103,6 +132,21 @@ export function authRoutes(app: Hono, config: Config, getDb: (c: Context) => Db)
     return c.redirect(url.toString());
   });
 
+  // Confirming an action by signing in again with a linked provider.
+  app.get('/auth/:provider{github|google}/confirm', async (c) => {
+    const provider = c.req.param('provider') as Provider;
+    const client = config[provider];
+    if (!client) return c.notFound();
+    const userId = await sessionUser(c, config, getDb(c));
+    const confirm = confirming(c.req.query('action'), c.req.query('target') ?? '', c.req.query('next'));
+    if (!userId || !confirm) return failed(c, new AuthError('Sign in first, then try again.'));
+    const state = generateState();
+    const verifier = generateCodeVerifier();
+    const url = await authorizationUrl(provider, client, redirectUri(config, provider), state, verifier, CONFIRM_PROMPT[provider]);
+    await writeFlow(c, config, { kind: 'oauth', provider, state, verifier, confirm } satisfies OAuthFlow);
+    return c.redirect(url.toString());
+  });
+
   app.get('/auth/:provider{github|google}/callback', async (c) => {
     const provider = c.req.param('provider') as Provider;
     const flow = await takeFlow<OAuthFlow>(c, config);
@@ -119,8 +163,19 @@ export function authRoutes(app: Hono, config: Config, getDb: (c: Context) => Db)
           ? await githubIdentity(config, tokens.access_token)
           : googleIdentity(config, tokens.id_token ?? '');
       const db = getDb(c);
-      const userId = await accountFor(db, await sessionUser(c, config), provider, identity.subject, identity.name);
-      await signIn(c, config, userId);
+      const current = await sessionUser(c, config, getDb(c));
+      if (flow.confirm) {
+        // Only an identity already linked to this account confirms.
+        const [known] = await db
+          .select()
+          .from(schema.identities)
+          .where(and(eq(schema.identities.provider, provider), eq(schema.identities.subject, identity.subject)));
+        if (!current || known?.userId !== current) throw new AuthError('Confirm with an account linked to this one.');
+        await writeConfirmation(c, config, current, flow.confirm.action, flow.confirm.target);
+        return c.redirect(`${flow.confirm.next ?? '/'}${flow.confirm.next?.includes('?') ? '&' : '?'}confirmed=${flow.confirm.action}`);
+      }
+      const userId = await accountFor(db, current, provider, identity.subject, identity.name);
+      await signIn(c, config, getDb(c), userId);
       return c.redirect('/');
     } catch (error) {
       return failed(c, error);
@@ -135,8 +190,12 @@ export function authRoutes(app: Hono, config: Config, getDb: (c: Context) => Db)
   // Passkeys. Signed out, registering one creates a new account.
   app.post('/auth/passkey/register/options', async (c) => {
     const db = getDb(c);
-    const current = await sessionUser(c, config);
+    const current = await sessionUser(c, config, getDb(c));
     const [user] = current ? await db.select().from(schema.users).where(eq(schema.users.id, current)) : [];
+    // Another way to sign in to an existing account is confirmed first.
+    if (user && !(await takeConfirmation(c, config, user.id, 'add-passkey', user.id))) {
+      return c.json({ error: 'confirm_required', action: 'add-passkey', target: user.id }, 403);
+    }
     const newUserId = user ? undefined : randomId();
     const existing = user ? await db.select().from(schema.passkeys).where(eq(schema.passkeys.userId, user.id)) : [];
     const options = await generateRegistrationOptions({
@@ -156,7 +215,7 @@ export function authRoutes(app: Hono, config: Config, getDb: (c: Context) => Db)
     const flow = await takeFlow<PasskeyFlow>(c, config);
     if (!flow || flow.kind !== 'passkey' || flow.mode !== 'register') return c.json({ error: 'The request expired. Please try again.' }, 400);
     const db = getDb(c);
-    const current = await sessionUser(c, config);
+    const current = await sessionUser(c, config, getDb(c));
     try {
       const verification = await verifyRegistrationResponse({
         response: await c.req.json(),
@@ -177,7 +236,7 @@ export function authRoutes(app: Hono, config: Config, getDb: (c: Context) => Db)
         transports: credential.transports?.join(',') ?? null,
         createdAt: Date.now()
       });
-      await signIn(c, config, userId);
+      await signIn(c, config, getDb(c), userId);
       return c.json({ ok: true });
     } catch (error) {
       console.error('passkey registration failed', error);
@@ -217,10 +276,73 @@ export function authRoutes(app: Hono, config: Config, getDb: (c: Context) => Db)
         .update(schema.passkeys)
         .set({ counter: verification.authenticationInfo.newCounter })
         .where(eq(schema.passkeys.id, key.id));
-      await signIn(c, config, key.userId);
+      await signIn(c, config, getDb(c), key.userId);
       return c.json({ ok: true });
     } catch (error) {
       console.error('passkey sign-in failed', error);
+      return c.json({ error: 'The passkey could not be verified.' }, 400);
+    }
+  });
+
+  // Confirming an action with a passkey of this account, or else by signing in
+  // again with a linked provider (GET /auth/{provider}/confirm).
+  app.post('/auth/confirm/options', async (c) => {
+    const userId = await sessionUser(c, config, getDb(c));
+    if (!userId) return c.json({ error: 'Sign in first' }, 401);
+    const body = (await c.req.json().catch(() => ({}))) as { action?: unknown; target?: unknown };
+    const confirm = confirming(body.action, body.target ?? '');
+    if (!confirm) return c.json({ error: 'Nothing to confirm' }, 400);
+    const db = getDb(c);
+    const keys = await db.select().from(schema.passkeys).where(eq(schema.passkeys.userId, userId));
+    if (keys.length === 0) {
+      const identities = await db.select({ provider: schema.identities.provider }).from(schema.identities).where(eq(schema.identities.userId, userId));
+      return c.json({ method: 'oauth', providers: identities.map((identity) => identity.provider).filter((provider) => config[provider]) });
+    }
+    const options = await generateAuthenticationOptions({
+      rpID: config.webauthnRpId,
+      userVerification: 'required',
+      allowCredentials: keys.map((key) => ({
+        id: key.id,
+        transports: key.transports ? (key.transports.split(',') as AuthenticatorTransport[]) : undefined
+      }))
+    });
+    await writeFlow(c, config, { kind: 'passkey', mode: 'confirm', challenge: options.challenge, confirm } satisfies PasskeyFlow);
+    return c.json({ method: 'passkey', options });
+  });
+
+  app.post('/auth/confirm/verify', async (c) => {
+    const flow = await takeFlow<PasskeyFlow>(c, config);
+    const userId = await sessionUser(c, config, getDb(c));
+    if (!flow || flow.kind !== 'passkey' || flow.mode !== 'confirm' || !flow.confirm || !userId) {
+      return c.json({ error: 'The request expired. Please try again.' }, 400);
+    }
+    const db = getDb(c);
+    const response = await c.req.json();
+    const [key] = await db
+      .select()
+      .from(schema.passkeys)
+      .where(and(eq(schema.passkeys.id, String(response?.id ?? '')), eq(schema.passkeys.userId, userId)));
+    if (!key) return c.json({ error: 'Confirm with a passkey of this account.' }, 400);
+    try {
+      const verification = await verifyAuthenticationResponse({
+        response,
+        expectedChallenge: flow.challenge,
+        expectedOrigin,
+        expectedRPID: config.webauthnRpId,
+        requireUserVerification: true,
+        credential: {
+          id: key.id,
+          publicKey: new Uint8Array(key.publicKey),
+          counter: key.counter,
+          transports: key.transports ? (key.transports.split(',') as AuthenticatorTransport[]) : undefined
+        }
+      });
+      if (!verification.verified) return c.json({ error: 'The passkey could not be verified.' }, 400);
+      await db.update(schema.passkeys).set({ counter: verification.authenticationInfo.newCounter }).where(eq(schema.passkeys.id, key.id));
+      await writeConfirmation(c, config, userId, flow.confirm.action, flow.confirm.target);
+      return c.json({ ok: true });
+    } catch (error) {
+      console.error('passkey confirmation failed', error);
       return c.json({ error: 'The passkey could not be verified.' }, 400);
     }
   });

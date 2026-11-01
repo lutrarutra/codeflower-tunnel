@@ -15,6 +15,8 @@ interface Bindings {
   DB: D1Database;
   ASSETS: Fetcher;
   CONNECTOR_HUB: DurableObjectNamespace<ConnectorHub>;
+  /** wrangler.toml's [[ratelimits]]; see ratelimit.ts. */
+  RATE_LIMITER?: RateLimit;
   [name: string]: unknown;
 }
 
@@ -168,6 +170,10 @@ export default {
       db: (c) => drizzle((c.env as Bindings).DB, { schema }),
       rendezvous: (c) => rendezvous(c.env as Bindings),
       clientIp: (c) => c.req.header('CF-Connecting-IP'),
+      rateLimit: async (c, key) => {
+        const limiter = (c.env as Bindings).RATE_LIMITER;
+        return limiter ? (await limiter.limit({ key })).success : true;
+      },
       page: async (c, path) => {
         const response = await (c.env as Bindings).ASSETS.fetch(new URL(path, c.req.url));
         // A copy: responses from fetch() have immutable headers, and the app adds its own.

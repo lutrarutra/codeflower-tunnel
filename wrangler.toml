@@ -29,6 +29,13 @@ class_name = "ConnectorHub"
 tag = "v1"
 new_sqlite_classes = ["ConnectorHub"]
 
+# Calls per address to the routes anyone can call that write or verify
+# something (new device codes, passkey ceremonies): src/ratelimit.ts.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "1001"
+simple = { limit = 30, period = 60 }
+
 [vars]
 PUBLIC_URL = "https://tunnels.codeflower.app"
 # Secrets, set with `wrangler secret put`: COOKIE_SECRET, GITHUB_CLIENT_ID,

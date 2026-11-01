@@ -1,10 +1,15 @@
-import { post, registerPasskey, signInWithPasskey } from './webauthn.js';
+import { answer, post, registerPasskey, returnedConfirmation, signInWithPasskey, withConfirmation } from './webauthn.js';
 
 const $ = (id) => document.getElementById(id);
 
 function showError(message) {
   $('error').textContent = message;
   $('error').hidden = !message;
+}
+
+function showNotice(message) {
+  $('notice').textContent = message;
+  $('notice').hidden = !message;
 }
 
 function item(...children) {
@@ -47,10 +52,7 @@ function resumeNext() {
 }
 
 async function request(path, method) {
-  const response = await fetch(path, { method });
-  const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error ?? `Request failed (${response.status})`);
-  return result;
+  return answer(await fetch(path, { method }));
 }
 
 /** Sandboxes it runs, as "online · 2 sandboxes"; connectors that do not report them say only "online". */
@@ -86,7 +88,9 @@ function connectorItem(connector) {
     'Revoke',
     async () => {
       if (!confirm(`Revoke ${connector.name}? It must sign in again, and paired browsers must pair again.`)) return;
-      await request(`/api/connectors/${encodeURIComponent(connector.id)}`, 'DELETE').catch((error) => showError(error.message));
+      await withConfirmation('delete-connector', connector.id, () => request(`/api/connectors/${encodeURIComponent(connector.id)}`, 'DELETE')).catch(
+        (error) => error?.name !== 'NotAllowedError' && showError(error.message)
+      );
       await renderConnectors();
     },
     'danger'
@@ -136,7 +140,9 @@ async function render() {
           'Remove',
           async () => {
             if (me.passkeys.length + me.identities.length <= 1) return showError('This is your only way to sign in. Add another first.');
-            await request(`/api/passkeys/${encodeURIComponent(key.id)}`, 'DELETE').catch((error) => showError(error.message));
+            await withConfirmation('delete-passkey', key.id, () => request(`/api/passkeys/${encodeURIComponent(key.id)}`, 'DELETE')).catch(
+              (error) => error?.name !== 'NotAllowedError' && showError(error.message)
+            );
             await render();
           },
           'danger'
@@ -164,15 +170,33 @@ document.addEventListener('DOMContentLoaded', () => {
     showError(error);
     history.replaceState(null, '', '/');
   }
+  // Nothing runs by itself on the way back: the user does it again.
+  if (returnedConfirmation()) showNotice('Confirmed. Do it again within two minutes to finish.');
   $('passkey-login').addEventListener('click', guarded(async () => (await signInWithPasskey(), render())));
   $('passkey-create').addEventListener('click', guarded(async () => (await registerPasskey(), render())));
-  $('passkey-add').addEventListener('click', guarded(async () => (await registerPasskey(), render())));
+  $('passkey-add').addEventListener(
+    'click',
+    guarded(async () => {
+      const me = await request('/api/me', 'GET');
+      await withConfirmation('add-passkey', me.user.id, registerPasskey);
+      await render();
+    })
+  );
   $('logout').addEventListener('click', guarded(async () => (await post('/auth/logout'), render())));
+  $('logout-everywhere').addEventListener(
+    'click',
+    guarded(async () => {
+      const me = await request('/api/me', 'GET');
+      await withConfirmation('sign-out-everywhere', me.user.id, () => post('/api/me/sign-out-everywhere'));
+      showNotice('Every other browser is signed out.');
+    })
+  );
   $('delete-account').addEventListener(
     'click',
     guarded(async () => {
       if (!confirm('Delete your account, its sign-in methods and all connectors? This cannot be undone.')) return;
-      await request('/api/me', 'DELETE');
+      const me = await request('/api/me', 'GET');
+      await withConfirmation('delete-account', me.user.id, () => request('/api/me', 'DELETE'));
       await render();
     })
   );

@@ -25,6 +25,16 @@ const endpoints: Record<Provider, Endpoints> = {
   }
 };
 
+/**
+ * What makes the provider ask the user again instead of answering at once
+ * for a browser already signed in, to confirm an action: GitHub's account
+ * picker, and for Google the picker and a fresh sign-in (OIDC max_age=0).
+ */
+export const CONFIRM_PROMPT: Record<Provider, Record<string, string>> = {
+  github: { prompt: 'select_account' },
+  google: { prompt: 'select_account', max_age: '0' }
+};
+
 export const generateState = (): string => randomToken();
 export const generateCodeVerifier = (): string => randomToken();
 
@@ -37,7 +47,9 @@ export async function authorizationUrl(
   client: OAuthClient,
   redirectUri: string,
   state: string,
-  verifier: string
+  verifier: string,
+  /** More parameters, e.g. prompt= to make the user sign in again. */
+  extra: Record<string, string> = {}
 ): Promise<URL> {
   const { authorize, scopes } = endpoints[provider];
   const url = new URL(authorize);
@@ -48,6 +60,7 @@ export async function authorizationUrl(
   url.searchParams.set('state', state);
   url.searchParams.set('code_challenge', await challenge(verifier));
   url.searchParams.set('code_challenge_method', 'S256');
+  for (const [name, value] of Object.entries(extra)) url.searchParams.set(name, value);
   return url;
 }
 
